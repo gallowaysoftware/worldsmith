@@ -58,6 +58,7 @@ profiles (worldsmith activate brings them all up).`,
 	root.AddCommand(listCommand())
 	root.AddCommand(activateCommand())
 	root.AddCommand(doctorCommand())
+	root.AddCommand(timelineCommand())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "worldsmith:", err)
@@ -185,14 +186,33 @@ func runStory(cmd *cobra.Command, slug string) error {
 		return fmt.Errorf("ensure priors: %w", err)
 	}
 
+	// Pre-pipeline: parse the brief's YAML frontmatter (if any) for
+	// year_override / pov_region / on_stage_actors, then compute the
+	// filtered timeline view and write it to historical_context.md
+	// in the run dir. The writer prompt reads that file verbatim.
+	brief, _, err := world.ParseBrief(layout.BriefFile(n))
+	if err != nil {
+		return fmt.Errorf("parse brief frontmatter: %w", err)
+	}
+	timeline, err := world.LoadTimeline(layout)
+	if err != nil {
+		return fmt.Errorf("load timeline: %w", err)
+	}
+	filterOpts := world.FilterOptsFromBrief(brief, timeline.Calendar)
+	historyPath, err := world.WriteHistoricalContext(installmentDir, timeline.Events, filterOpts)
+	if err != nil {
+		return fmt.Errorf("write historical context: %w", err)
+	}
+
 	cfg := pipeline.StoryConfig{
-		InstallmentNumber: n,
-		WorldFile:         layout.WorldFile(),
-		CharactersFile:    layout.CharactersFile(),
-		CanonFile:         canonPath,
-		PriorsFile:        priorsPath,
-		BriefFile:         layout.BriefFile(n),
-		NarratorVoice:     storyNarrator,
+		InstallmentNumber:     n,
+		WorldFile:             layout.WorldFile(),
+		CharactersFile:        layout.CharactersFile(),
+		CanonFile:             canonPath,
+		PriorsFile:            priorsPath,
+		BriefFile:             layout.BriefFile(n),
+		HistoricalContextFile: historyPath,
+		NarratorVoice:         storyNarrator,
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "world: %s\n", slug)
@@ -242,13 +262,14 @@ func runStory(cmd *cobra.Command, slug string) error {
 func stubPipelineFactory() func() (*vamp.Pipeline, error) {
 	return func() (*vamp.Pipeline, error) {
 		return pipeline.BuildStory(pipeline.StoryConfig{
-			InstallmentNumber: 1,
-			WorldFile:         os.DevNull,
-			CharactersFile:    os.DevNull,
-			CanonFile:         os.DevNull,
-			PriorsFile:        os.DevNull,
-			BriefFile:         os.DevNull,
-			NarratorVoice:     "am_fenrir",
+			InstallmentNumber:     1,
+			WorldFile:             os.DevNull,
+			CharactersFile:        os.DevNull,
+			CanonFile:             os.DevNull,
+			PriorsFile:            os.DevNull,
+			BriefFile:             os.DevNull,
+			HistoricalContextFile: os.DevNull,
+			NarratorVoice:         "am_fenrir",
 		})
 	}
 }

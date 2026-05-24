@@ -17,6 +17,8 @@ guided by the brief, in the voice the world bible specifies.
 
 {{ readFile .inputs.canon_file }}
 
+{{ readFile .inputs.historical_context_file }}
+
 # Prior installment summaries
 
 {{ readFile .inputs.priors_file }}

@@ -24,8 +24,16 @@ type StoryConfig struct {
 	// summaries. Must exist; empty for installment 1.
 	PriorsFile string
 	// BriefFile is the path to this installment's brief.md (the
-	// per-installment human direction).
+	// per-installment human direction). May carry YAML frontmatter
+	// (year_override, pov_region, on_stage_actors) the CLI parses
+	// before kickoff to drive timeline filtering.
 	BriefFile string
+	// HistoricalContextFile is the path to the pre-rendered timeline
+	// view for this installment (events through year_override or
+	// current_year, with visibility filtering applied). Always set
+	// by the CLI; empty file when the world has no timeline.json or
+	// no events pass the filter.
+	HistoricalContextFile string
 	// NarratorVoice is the Kokoro voice id to use. Default
 	// "am_fenrir" (warm baritone) — overridden via the CLI flag.
 	NarratorVoice string
@@ -75,6 +83,8 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 		vamp.Describe("Path to concatenated prior-installment summaries (may be empty for #1)."))
 	p.Input("brief_file", vamp.Required(), vamp.WithDefault(cfg.BriefFile),
 		vamp.Describe("Path to this installment's brief.md (human-authored direction)."))
+	p.Input("historical_context_file", vamp.WithDefault(cfg.HistoricalContextFile),
+		vamp.Describe("Path to the pre-filtered timeline view for this installment (rendered by the CLI before pipeline kickoff). Empty file when the world has no timeline."))
 	p.Input("installment_number", vamp.WithDefault(fmt.Sprintf("%d", cfg.InstallmentNumber)),
 		vamp.Describe("1-indexed installment number; baked into m4b metadata."))
 
