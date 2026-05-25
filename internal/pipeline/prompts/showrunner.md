@@ -43,6 +43,13 @@ First byte: `{`.
 - **One segment per paragraph.** The editor's paragraph boundaries
   are sentence-rhythm-tested by a human and a model; preserve them.
   Don't merge paragraphs, don't split them.
+- **Skip scene-break markup.** Lines that are just `***`, `---`,
+  `* * *`, or any other non-text divider are PROSE structural
+  markup, not narration. Do NOT emit a segment for them; the
+  silence between segments handles the break naturally. Empty
+  segments (text of zero length, or text that's only punctuation /
+  whitespace) likewise must NOT appear in the output — TTS engines
+  fail-empty-body on those.
 - **Preserve word order.** The narration matches the prose word-
   for-word. Punctuation may be lightly adjusted for spoken cadence
   (em-dashes inserted at natural pauses, semicolons → commas) but

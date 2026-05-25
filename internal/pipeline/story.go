@@ -104,15 +104,31 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 
 	// ---- prose ----
 
+	// Shared sampler shape for the long-form prose stages. Two
+	// non-defaults besides temperature:
+	//   - chat_template_kwargs.enable_thinking=false: Qwen3 otherwise
+	//     emits 1-4 KB of "Here's a thinking process: ..." bullets at
+	//     the top of the output, which ended up *in* draft.md /
+	//     story.md as visible CoT. Hard-switch off — the model still
+	//     reasons, it just doesn't externalise.
+	//   - repetition_penalty + presence_penalty: Qwen3 on long output
+	//     (~7-8k words) at low temperature is prone to anaphora
+	//     collapse near the end ("He thought of X. He thought of
+	//     Y. He thought of Z." for 200+ lines). 1.1 / 0.3 is the
+	//     light touch that breaks the loop without turning the prose
+	//     synthetic.
+	thinkingOff := map[string]any{"enable_thinking": false}
+
 	draft := p.Text("write_story").
 		Capability("long_form").
 		PromptFS(PromptsFS, "write_story.md").
 		Output("draft.md").
 		Param("temperature", 0.8).
-		// 24k token budget — accommodates a thinking-preamble (Qwen
-		// emits up to 4k of <think>) plus 5-8k words ≈ 7-10k tokens
-		// of actual prose, with comfortable headroom for the ending.
-		Param("max_tokens", 24576)
+		// 24k token budget — fits 7-9k words of prose with headroom.
+		Param("max_tokens", 24576).
+		Param("chat_template_kwargs", thinkingOff).
+		Param("repetition_penalty", 1.1).
+		Param("presence_penalty", 0.3)
 
 	edited := p.Text("edit_story").
 		Capability("long_form").
@@ -120,7 +136,10 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 		PromptFS(PromptsFS, "edit_story.md").
 		Output("story.md").
 		Param("temperature", 0.4).
-		Param("max_tokens", 24576)
+		Param("max_tokens", 24576).
+		Param("chat_template_kwargs", thinkingOff).
+		Param("repetition_penalty", 1.1).
+		Param("presence_penalty", 0.3)
 
 	// ---- canon + summary (run in parallel with cover) ----
 
@@ -189,9 +208,26 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 
 	// ---- segments + TTS ----
 
+	// Filter scene-break / empty segments before TTS: showrunner
+	// occasionally emits a segment for prose markup like "***" or
+	// "---" (paragraph dividers). Kokoro fails with empty-body on
+	// those. Belt-and-braces — the showrunner prompt also rejects
+	// them, but a render-time filter ensures a single LLM slip
+	// doesn't blow up an otherwise complete pipeline.
 	segments := p.Render("enumerate_segments").
 		After(showrunner).
-		Prompt(`{"items": {{ toJSON (index (parseJSON .stages.showrunner.output) "segments") }} }`).
+		Prompt(`{"items": [
+{{- $segs := index (parseJSON .stages.showrunner.output) "segments" -}}
+{{- $first := true -}}
+{{- range $segs -}}
+{{- $text := trim (index . "text") -}}
+{{- if and (ne $text "") (ne $text "***") (ne $text "---") (ne $text "* * *") -}}
+  {{- if not $first }},
+{{ end -}}{{- $first = false -}}
+  {{ toJSON . }}
+{{- end -}}
+{{- end -}}
+] }`).
 		Output("segments.json").
 		OutputFormatJSON()
 
