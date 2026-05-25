@@ -148,7 +148,11 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 		PromptFS(PromptsFS, "cover.md").
 		Output("cover_prompt.txt").
 		Param("temperature", 0.6).
-		Param("max_tokens", 4096)
+		Param("max_tokens", 4096).
+		// Same CoT-suppression as showrunner: cover.md asks for a
+		// single-line SDXL prompt. Qwen3 with CoT on emitted 10KB of
+		// "Thinking through the composition:" bullets instead.
+		Param("chat_template_kwargs", map[string]any{"enable_thinking": false})
 
 	generateCover := p.ComfyUI("generate_cover").
 		Capability("image_gen").
@@ -168,7 +172,20 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 		OutputFormatJSON().
 		Output("script.json").
 		Param("temperature", 0.2).
-		Param("max_tokens", 32768)
+		Param("max_tokens", 32768).
+		// chat_template_kwargs.enable_thinking=false: same fix as
+		// iitn's showrunner. Qwen3 emits a verbose chain-of-thought
+		// preamble before strict-JSON output, which trips the JSON
+		// gate with "invalid character 'T' looking for beginning of
+		// value" (the prose "The script needs..." opener). Hard-
+		// switching CoT off on this stage saves the run.
+		Param("chat_template_kwargs", map[string]any{"enable_thinking": false}).
+		Retry(&vamp.RetryPolicy{
+			MaxAttempts:    3,
+			InitialBackoff: 10 * time.Second,
+			MaxBackoff:     30 * time.Second,
+			RetryOn:        []string{"transient", "invalid_output"},
+		})
 
 	// ---- segments + TTS ----
 
