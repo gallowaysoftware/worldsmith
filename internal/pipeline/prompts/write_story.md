@@ -103,47 +103,33 @@ opening sentence.
    installment can pick up. Cliffhangers OK if the brief implies
    them; otherwise a resolved closing beat.
 
-# Length (hard floor — read carefully)
+# Length
 
-**Minimum 5,000 words. Target the count the brief specifies (typically
-7,500). Do NOT end the story before hitting the minimum, even if you
-feel the brief's beats are "covered."**
+The scene plan above carries per-scene `word_budget` values. Their
+sum is the installment's target. Treat each scene's budget as a
+target you write *to*, not a ceiling you can stop short of — the
+edit pass will catch genuinely-too-long drafts; it cannot rescue a
+draft that finished a scene's beats in 300 words when the budget
+was 1,500.
 
-Past models on this pipeline finished the brief's beats and stopped
-at 1,500-3,000 words. That's not what the brief is asking for. The
-brief lists *beats* — milestones the story moves through — not the
-total content. Each beat is a *scene*, often the *length of a
-chapter*. A 5-beat brief expects 5 scenes of roughly equal weight,
-each developed at audiobook length (~1,000-1,500 words per scene).
-
-What "develop a scene" means at this length:
+An audiobook listener hears every sentence at speaking speed.
+Brevity that scans on the page feels truncated read aloud. When
+in doubt, lean longer:
 - Stay in the scene long enough for the reader to feel its texture.
-  An audiobook listener hears every sentence at speaking speed —
-  brevity that reads fast on paper feels truncated read aloud.
-- Use the world bible's specific sensory anchors (the lighthouse's
-  stair count, the cracked breakwater, the smell of tar, the
-  weather). Don't generalise.
-- Let characters think on the page (POV interiority is allowed even
-  when the world bible says "spare"). The two register opposites
-  — Le Guin's quiet introspection and McCarthy's exterior austerity
-  — both produce 5,000+ word scenes when the writer commits.
-- Let dialogue *land* — not every line needs a response within two
-  beats. Silence between exchanges is part of the scene.
+- Let characters think on the page (POV interiority is allowed
+  even in spare-register worlds).
+- Let dialogue land — silence between exchanges is part of the
+  scene.
 - The historical context (events from the timeline) is connective
   tissue. When a character mentions an event from history, the
-  prose can dwell on what it means to *that character* — what
-  their grandparent did, what the rumour holds, who they think is
-  lying about it.
+  prose can dwell on what it means to *that character*.
 
-If you naturally finish all the brief's beats before 5,000 words,
-that means you summarised. Go back and **expand** the scenes you
-skimmed — pick the two or three where there's most subtext and write
-into them. Add interiority, sensory specifics, half-finished
-dialogue exchanges, the texture of waiting between events.
+If you finish a scene under its budget, **expand it in place**
+with sensory texture, interiority, half-finished dialogue, the
+texture of waiting between events — not by inventing new world
+facts.
 
-Soft ceiling: 9,000 words (this is the high end of a single
-audiobook installment — past it, the brief should split into two
-installments instead).
+Soft ceiling: ~9,000 words total. Past it, the brief should split.
 
 # What NOT to do
 
