@@ -236,23 +236,42 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 
 	// ---- segments + TTS ----
 
-	// Filter scene-break / empty segments before TTS: showrunner
-	// occasionally emits a segment for prose markup like "***" or
-	// "---" (paragraph dividers). Kokoro fails with empty-body on
-	// those. Belt-and-braces — the showrunner prompt also rejects
-	// them, but a render-time filter ensures a single LLM slip
-	// doesn't blow up an otherwise complete pipeline.
+	// Filter scene-break / empty segments and split long paragraphs
+	// at sentence boundaries before TTS:
+	//
+	//   * Scene-break filter: showrunner occasionally emits a segment
+	//     for prose markup like "***" or "---" (paragraph dividers).
+	//     Kokoro fails with empty-body on those. Belt-and-braces —
+	//     the showrunner prompt also rejects them, but a render-time
+	//     filter ensures a single LLM slip doesn't blow up an
+	//     otherwise complete pipeline.
+	//
+	//   * Long-segment split: Kokoro rushes calls over ~300 chars,
+	//     eliding interior comma pauses. splitSentences chops long
+	//     paragraphs at sentence boundaries (greedy-packed to fit
+	//     under maxChars). Sub-segments inherit the parent's host /
+	//     voice_id; per-call IDs are regenerated sequentially.
+	//     Splitting deterministically here is more reliable than
+	//     asking the showrunner to do it (we tried; the model treats
+	//     "split paragraphs over 350 chars" as advisory).
 	segments := p.Render("enumerate_segments").
 		After(showrunner).
 		Prompt(`{"items": [
 {{- $segs := index (parseJSON .stages.showrunner.output) "segments" -}}
+{{- $i := 0 -}}
 {{- $first := true -}}
 {{- range $segs -}}
 {{- $text := trim (index . "text") -}}
 {{- if and (ne $text "") (ne $text "***") (ne $text "---") (ne $text "* * *") -}}
-  {{- if not $first }},
+  {{- $host := index . "host" -}}
+  {{- $voice := index . "voice_id" -}}
+  {{- $chunks := parseJSON (splitSentences $text 300) -}}
+  {{- range $chunks -}}
+    {{- if not $first }},
 {{ end -}}{{- $first = false -}}
-  {{ toJSON . }}
+    {"id": "seg_{{ printf "%03d" $i }}", "host": {{ toJSON $host }}, "voice_id": {{ toJSON $voice }}, "text": {{ toJSON . }}}
+    {{- $i = addInt $i 1 -}}
+  {{- end -}}
 {{- end -}}
 {{- end -}}
 ] }`).

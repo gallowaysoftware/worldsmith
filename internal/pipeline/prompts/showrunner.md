@@ -66,9 +66,19 @@ identify the speaker (or the paragraph is mixed), use
 
 # Rules
 
-- **One segment per paragraph.** The editor's paragraph boundaries
-  are sentence-rhythm-tested; preserve them. Don't merge paragraphs,
-  don't split them, even when assigning voices.
+- **One segment per paragraph — UNLESS the paragraph exceeds ~350
+  characters.** Kokoro rushes long calls and elides interior pause
+  cues; commas inside an 500-character paragraph effectively
+  disappear as the engine sprints to the period. For paragraphs
+  over ~350 chars, split at sentence boundaries (`.`, `!`, `?`)
+  into 2-3 sub-segments, each ~150-300 chars. Keep all sub-segments
+  routed to the SAME host/voice (a 600-char Aria paragraph becomes
+  three Aria sub-segments, never gets routed to a different
+  voice). The silence between segments restores the prosodic
+  pauses the model was eliding inside the long call. Paragraphs
+  under ~350 chars stay as single segments — Kokoro renders short
+  calls correctly. Don't merge paragraphs together regardless of
+  length.
 - **Skip scene-break markup.** Lines that are just `***`, `---`,
   `* * *`, or any other non-text divider are PROSE structural
   markup, not narration. Do NOT emit a segment for them; the

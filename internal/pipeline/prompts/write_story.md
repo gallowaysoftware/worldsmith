@@ -79,6 +79,31 @@ opening sentence.
    speaking. The character's response to the object is the
    character's, not the object's. Sensory description only.
 
+   **No transcendent inner-truth claims.** Characters do not have
+   hidden access to truths that contradict the world's rules. A
+   character facing torture does not get to mentally drift "into
+   the spaces between the words," become unreachable, or claim
+   internal access to a deeper layer of reality the captors
+   cannot touch. A character whose craft the bible defines as
+   neural/cognitive (cartography, glassblowing, navigation,
+   medicine) does not get to mentally claim "the real X is not in
+   the [bible-defined substrate]; it is in the connections / the
+   silences / the unnamed things." That's mysticism by the back
+   door — granting the character spiritual victory at the cost of
+   the world's stated rules. The bible's rules apply equally to
+   the prose's surface AND to characters' interior weather. If
+   the bible says no magic, the character's inner monologue cannot
+   smuggle magic in as personal spiritual victory.
+
+   This failure mode appears most often at closings where the
+   character has no physical escape: the model wants to give them
+   a transcendent inner one. Don't. The horror of an unwinnable
+   situation must NOT be neutralised by an inner-truth claim. The
+   character can refuse, fear, remember, plan, accept, choose
+   silence, perform a small specific act — but they cannot escape
+   to a metaphysical layer the world's rules don't permit. Their
+   interiority is interiority, not a parallel reality.
+
 3. **Honour the canon-so-far.** Recurring characters keep their
    established voices; previously-named locations stay named the
    way they were; prior events stand. If a character died, they're
