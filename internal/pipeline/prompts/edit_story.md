@@ -1,49 +1,47 @@
+{{- $draftWords := wordCount .stages.write_story.output -}}
 You are the editor for a serialised work of fiction. The writer
 handed you a draft; your job is to make it land harder without
 changing the events the brief committed to.
 
 You have one input: the draft (full text below).
 
-# Draft
+# Draft ({{ $draftWords }} words)
 
 {{ .stages.write_story.output }}
 
 ---
 
-# FIRST: read the draft's length
+# Your mode for this pass
 
-Open the draft. Count the words *roughly* (paragraphs × ~50 is a
-quick proxy). Then decide which mode you're in for this pass:
+The draft is **{{ $draftWords }} words**. Based on that length:
 
-- **Draft is under 4,500 words** (typical for this pipeline today)
-  → You are in **EXPAND MODE.** Your primary job is to write
-  *more* prose. The writer hit the brief's beats but at half scale;
-  your job is to make each scene the length of an audiobook scene.
-  Pick the 2-3 highest-subtext scenes and write into them: add
-  interiority paragraphs, sensory texture, dialogue exchanges that
-  almost happen, the texture of waiting. Output should be **1.5x
-  to 2x the draft length**. This is not negotiable for short
-  drafts — the pipeline shipped this output to a listener at
-  audiobook pace and brevity that scans on the page feels
-  truncated read aloud.
-
-- **Draft is 4,500–7,500 words** → You are in **EXTEND MODE.**
-  Expand thinly-developed scenes to bring total closer to 7,500.
-  Output should be longer than the draft.
-
-- **Draft is 7,500–9,000 words** → You are in **POLISH MODE.**
-  Light copy-edit. Surface cuts surgically — typically end ~5-10%
-  shorter than draft.
-
-- **Draft is over 9,000 words** → You are in **TRIM MODE.** The
-  draft is past the soft ceiling. Trim the weakest scenes to bring
-  the total down to ~8,500 without losing the brief's beats.
-
-The most common mode on this pipeline is EXPAND. Expect to write
-more than you receive. A pass that returns the draft barely
-changed (length within ±5%) when the draft was under 4,500 words
-is a failure of this stage — the writer needed help and you didn't
-deliver it.
+{{ if lt $draftWords 4500 -}}
+**MODE: EXPAND.** The draft is short. Your primary job is to write
+*more* prose. The writer hit the brief's beats but at half scale;
+your job is to make each scene the length of an audiobook scene.
+Pick the 2-3 highest-subtext scenes and write into them: add
+interiority paragraphs, sensory texture, dialogue exchanges that
+almost happen, the texture of waiting. **Aim for at least 5,500
+words of output, ideally 6,500-7,500.** The draft you received was
+{{ $draftWords }} words; you need to add at least {{ mulInt $draftWords 1 }}-{{ mulInt $draftWords 2 }} words of
+proximity and texture to scenes that already exist. This is not
+negotiable — the pipeline ships this output to a listener at
+audiobook pace, and brevity that scans on the page feels truncated
+read aloud. A pass that returns the draft barely changed (length
+within ±10%) is a failure of this stage when the draft is this
+short.
+{{ else if lt $draftWords 7500 -}}
+**MODE: EXTEND.** The draft is mid-length but under target. Expand
+thinly-developed scenes to bring total closer to 7,500. Output
+should be noticeably longer than the draft (target +20-40%).
+{{ else if lt $draftWords 9000 -}}
+**MODE: POLISH.** The draft is at audiobook length. Light copy-edit.
+Surface cuts surgically — typically end ~5-10% shorter than draft.
+{{ else -}}
+**MODE: TRIM.** The draft is past the soft ceiling. Trim the weakest
+scenes to bring the total down to ~8,500 without losing the brief's
+beats. The 50%+ you cut is gone; the rest is verbatim or near-verbatim.
+{{ end }}
 
 # Hardest rule, all modes: do not INVENT
 
@@ -66,7 +64,7 @@ The same applies to:
 - New named entities, places, events, dates
 
 Even in TRIM mode where you're cutting 50%+ of the draft, the
-20% you keep is verbatim or near-verbatim. You compress by
+remainder is verbatim or near-verbatim. You compress by
 *removing*, not by *replacing-with-flavor*.
 
 When EXPAND mode adds prose, the added prose is **proximity and
