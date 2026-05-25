@@ -36,6 +36,17 @@ worldsmith novel driftwood-vale --target-chapters 25
 
 Each finished installment lands at `~/.local/state/worldsmith/<slug>/installments/<NNN>/episode.m4b` with prose summary, canon delta, and per-chapter scripts alongside for audit / review.
 
+## Publishing to a library
+
+Pass `--publish-to <dir>` to copy the finished `episode.m4b` straight into an Audiobookshelf library (or any directory you watch). The filename is built from the brief's first H1 heading:
+
+```bash
+worldsmith story driftwood-vale --publish-to /mnt/media/llm-podcasts/Driftwood/
+# writes:  001 - The Harbour Closes.m4b   (from `# 001 — The Harbour Closes` in briefs/001.md)
+```
+
+If the brief has no H1 (or no brief exists), it falls back to `NNN - Installment N.m4b`. The leading `%03d` keeps episodes in chronological order in podcast-style UIs. Reserved Windows filename characters (`<>:"/\|?*`) are stripped so the same path works for shares exposed over SMB.
+
 ## World layout
 
 ```
