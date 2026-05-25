@@ -45,6 +45,41 @@ changed (length within ±5%) when the draft was under 4,500 words
 is a failure of this stage — the writer needed help and you didn't
 deliver it.
 
+# Hardest rule, all modes: do not INVENT
+
+Editing is moving / cutting / expanding work the writer already
+did. It is NOT writing new content the draft did not contain.
+Specifically, **no new facts about the world enter at this stage.**
+If the writer wrote "He had told the story of the current," the
+edit may keep that, cut it, or surround it with sensory detail
+from the draft's own register — but the edit **MUST NOT** turn it
+into "He had told the story of the current, how it shifted with the
+moon and the blood." That second clause is a *fact* about the
+world (a magical current) the draft didn't claim. Inventing it
+during edit is a violation.
+
+The same applies to:
+- New backstory details ("the lie that kept the Astrians at bay")
+- New character motivations the draft didn't establish
+- New supernatural elements anywhere — narration, dialogue, or
+  character thought
+- New named entities, places, events, dates
+
+Even in TRIM mode where you're cutting 50%+ of the draft, the
+20% you keep is verbatim or near-verbatim. You compress by
+*removing*, not by *replacing-with-flavor*.
+
+When EXPAND mode adds prose, the added prose is **proximity and
+texture**: sensory description of what's in the scene, character
+business (hand gestures, pauses, breath), interiority of the POV
+character's interior weather, the silence between dialogue lines.
+None of that introduces world-facts. Inventing "the current shifts
+with the moon" to fill 200 words is the failure pattern.
+
+If you find yourself wanting to add a new specific detail to
+make a passage land harder, **ask: did the draft establish
+this?** If no, leave it abstract or remove the passage.
+
 # What to cut / rewrite (when present)
 
 - **Cliché phrases.** "Heart pounding," "blood ran cold," "time

@@ -55,12 +55,38 @@ func BuildBenchStory(cfg BenchStoryConfig) (*vamp.Pipeline, error) {
 		SuggestedModel: "qwen3.6-27b-mtp-q6_k",
 	})
 
+	thinkingOff := map[string]any{"enable_thinking": false}
+
+	// Bench mirrors the production story pipeline's prose stages
+	// (outline_story → write_story → edit_story) so the bench is
+	// fair to the production prompt set. The bench skips the
+	// audiobook stages (showrunner / TTS / mix / cover) since prose
+	// quality is the variable under study.
+	outline := p.Text("outline_story").
+		Capability("long_form").
+		PromptFS(PromptsFS, "outline_story.md").
+		OutputFormatJSON().
+		Output("outline.json").
+		Param("temperature", 0.4).
+		Param("max_tokens", 8192).
+		Param("chat_template_kwargs", thinkingOff).
+		Retry(&vamp.RetryPolicy{
+			MaxAttempts:    3,
+			InitialBackoff: 5 * time.Second,
+			MaxBackoff:     30 * time.Second,
+			RetryOn:        []string{"transient", "invalid_output"},
+		})
+
 	draft := p.Text("write_story").
 		Capability("long_form").
+		After(outline).
 		PromptFS(PromptsFS, "write_story.md").
 		Output("draft.md").
 		Param("temperature", 0.8).
 		Param("max_tokens", 24576).
+		Param("chat_template_kwargs", thinkingOff).
+		Param("repetition_penalty", 1.1).
+		Param("presence_penalty", 0.3).
 		Retry(&vamp.RetryPolicy{
 			MaxAttempts:    2,
 			InitialBackoff: 5 * time.Second,
@@ -74,6 +100,9 @@ func BuildBenchStory(cfg BenchStoryConfig) (*vamp.Pipeline, error) {
 		Output("story.md").
 		Param("temperature", 0.4).
 		Param("max_tokens", 24576).
+		Param("chat_template_kwargs", thinkingOff).
+		Param("repetition_penalty", 1.1).
+		Param("presence_penalty", 0.3).
 		Retry(&vamp.RetryPolicy{
 			MaxAttempts:    2,
 			InitialBackoff: 5 * time.Second,
