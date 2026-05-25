@@ -59,6 +59,7 @@ profiles (worldsmith activate brings them all up).`,
 	root.AddCommand(activateCommand())
 	root.AddCommand(doctorCommand())
 	root.AddCommand(timelineCommand())
+	root.AddCommand(benchCommand())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "worldsmith:", err)

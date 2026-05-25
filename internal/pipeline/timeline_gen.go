@@ -105,7 +105,7 @@ func BuildTimelineGen(cfg TimelineGenConfig) (*vamp.Pipeline, error) {
 
 	elaborateRegional := p.Text("elaborate_regional").
 		Capability("long_form").
-		After(seedAnchors).
+		After(seedEras, seedAnchors).
 		PromptFS(PromptsFS, "timeline_elaborate_regional.md").
 		OutputFormatJSON().
 		Output("regional.json").
@@ -116,7 +116,7 @@ func BuildTimelineGen(cfg TimelineGenConfig) (*vamp.Pipeline, error) {
 
 	personalise := p.Text("personalise").
 		Capability("long_form").
-		After(elaborateRegional).
+		After(seedEras, seedAnchors, elaborateRegional).
 		PromptFS(PromptsFS, "timeline_personalise.md").
 		OutputFormatJSON().
 		Output("personal.json").
@@ -127,7 +127,7 @@ func BuildTimelineGen(cfg TimelineGenConfig) (*vamp.Pipeline, error) {
 
 	p.Text("fog_pass").
 		Capability("long_form").
-		After(personalise).
+		After(seedEras, seedAnchors, elaborateRegional, personalise).
 		PromptFS(PromptsFS, "timeline_fog_pass.md").
 		OutputFormatJSON().
 		Output("visibilities.json").

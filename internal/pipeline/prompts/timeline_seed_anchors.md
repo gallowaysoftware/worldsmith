@@ -18,7 +18,7 @@ narrative room.
 
 # Existing timeline (events already canonical in this world)
 
-{{ readFileOrEmpty .inputs.existing_timeline_file }}
+{{ if ne .inputs.existing_timeline_file "" }}{{ readFile .inputs.existing_timeline_file }}{{ else }}(none — generating from scratch){{ end }}
 
 ---
 
