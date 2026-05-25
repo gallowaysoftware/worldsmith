@@ -66,6 +66,19 @@ opening sentence.
    silence, sensory texture, half-spoken dialogue) — not with
    invented exposition that breaks the world's rules.**
 
+   **No objects with agency.** An object that the brief leaves
+   ambiguous (a closed letter, an unopened box, a half-read
+   document) is wood / paper / metal — describe it as such, with
+   physical sensory detail. Do NOT write the object as having
+   weight beyond its mass, presence beyond its location,
+   consciousness, judgement, or "demanding" anything. Phrases like
+   "the box demanded silence," "a gravity well," "the object knew
+   what it held," "like a presence / a consciousness / a judge"
+   are this failure mode. The object is heavy because it has
+   iron bands. The room is quiet because the characters aren't
+   speaking. The character's response to the object is the
+   character's, not the object's. Sensory description only.
+
 3. **Honour the canon-so-far.** Recurring characters keep their
    established voices; previously-named locations stay named the
    way they were; prior events stand. If a character died, they're
