@@ -70,9 +70,13 @@ regional + personal), assign a `visibility` block:
 
 - **`cloistered`**: known only to a named actor/faction allowlist.
   Use for secret oaths, hidden marriages, faked deaths, suppressed
-  prophecies, true reasons behind public decisions. Set `known_to`
+  prophecies, true reasons behind public decisions. **Also the
+  default tier for personal / family events** (a parent's death of
+  a private illness, a sibling's debt, a child born out of wedlock)
+  — the family knows, the wider world doesn't. Set `known_to`
   to the slugs of who knows the truth. Set `rumoured_as` to the
-  public version that non-knowers got.
+  public version that non-knowers got, or `""` if the wider world
+  never heard at all.
 
 - **`secret`**: NEVER spoken aloud, never shown to the writer
   prompt; surfaces only to the showrunner as a potential
