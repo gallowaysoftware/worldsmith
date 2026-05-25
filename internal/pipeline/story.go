@@ -257,13 +257,21 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 		Output("segments.json").
 		OutputFormatJSON()
 
+	// Voice is template-rendered per foreach item (vibe v0.6.2+).
+	// Each segment carries its own voice_id from the showrunner —
+	// narrator paragraphs get NarratorVoice (am_fenrir), named-
+	// character dialogue gets that character's Kokoro voice (Tova /
+	// Voss / Henr / Lis each have a voice_id in characters.json).
+	// The `or` fallback keeps the stage robust to a missing voice_id
+	// on a segment: empty falls through to NarratorVoice rather than
+	// crashing the run.
 	audio := p.Audio("cast_voice").
 		Capability("tts").
 		After(segments).
 		Foreach(segments, "segment").
 		Engine(vamp.AudioEngineKokoro).
 		EngineURL(cfg.KokoroURL).
-		Voice(cfg.NarratorVoice).
+		Voice(fmt.Sprintf(`{{ or .segment.voice_id %q }}`, cfg.NarratorVoice)).
 		TextTemplate(`{{ ttsNormalize .segment.text "" }}`).
 		Output("audio/{{.segment.id}}.wav")
 
