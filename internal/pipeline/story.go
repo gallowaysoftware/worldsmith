@@ -175,7 +175,8 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 		PromptFS(PromptsFS, "canon_delta.md").
 		Output("canon_delta.md").
 		Param("temperature", 0.2).
-		Param("max_tokens", 8192)
+		Param("max_tokens", 8192).
+		Param("chat_template_kwargs", thinkingOff)
 
 	p.Text("summarize").
 		Capability("long_form").
@@ -183,7 +184,8 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 		PromptFS(PromptsFS, "summarize.md").
 		Output("summary.md").
 		Param("temperature", 0.3).
-		Param("max_tokens", 4096)
+		Param("max_tokens", 4096).
+		Param("chat_template_kwargs", thinkingOff)
 
 	// ---- cover ----
 
