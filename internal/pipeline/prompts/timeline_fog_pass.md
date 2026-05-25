@@ -46,20 +46,27 @@ regional + personal), assign a `visibility` block:
 
 ## Tier semantics
 
-- **`common`**: every literate person in the world knows it; the
-  prose can reference it freely. Use for foundings of major
-  cities, crowning of widely-known monarchs, plagues that swept a
-  continent. Set `known_to: []` (everyone knows). Set
-  `rumoured_as: ""`.
+- **`common`**: appears in widely-distributed chronicles; an
+  educated person from any region could plausibly have heard of it,
+  even if their version is fuzzy on details. The prose can
+  reference it freely. **This is the default tier for major
+  recorded history** — foundings of cities, wars, named monarchs,
+  plagues, treaties, technological breakthroughs, famines.
+  "Common" doesn't mean "every peasant knows it"; it means "it's
+  in the world's shared historical record." Set `known_to: []`
+  (everyone knows). Set `rumoured_as: ""`.
 
-- **`regional`**: known within `event.region`; people from
-  elsewhere have at most a vague rumour. Use for regional wars,
-  local heroes, founding of a guild that didn't grow famous. Set
-  `known_to: []` (the region's residents know automatically).
-  Set `rumoured_as` to the public-told distortion non-region
-  observers might have heard. If the event is regional but
-  genuinely had no echo outside its region, leave `rumoured_as: ""`
-  and non-region observers will see nothing.
+- **`regional`**: known within `event.region` but **genuinely
+  didn't propagate beyond it**. Use for events that mattered
+  locally and faded — a local hero who didn't grow famous, a
+  guild charter that stayed obscure, a flood whose only record is
+  the parish that drowned. If you find yourself reaching for
+  `regional` because the event "started in" one region, pause:
+  most major historical events START somewhere and propagate.
+  Only mark `regional` when propagation genuinely didn't happen.
+  Set `known_to: []` (the region's residents know automatically).
+  Set `rumoured_as` to whatever vague distortion non-region
+  observers might have heard, or `""` if no echo carried.
 
 - **`cloistered`**: known only to a named actor/faction allowlist.
   Use for secret oaths, hidden marriages, faked deaths, suppressed
@@ -82,17 +89,31 @@ regional + personal), assign a `visibility` block:
 
 ## Distribution discipline
 
-Don't make everything cloistered or secret — boring + monotone.
+**Most events should be `common`.** The world's recorded history is
+the substrate; secrets and forgotten lore are the deviations from
+it. A timeline where most events are regional or secret is a
+timeline where the world feels small and paranoid for no reason.
+
 Sane targets for a 40-event timeline:
 
-- ~50% `common` (the world's recorded history)
-- ~25% `regional`
-- ~15% `cloistered`
-- ~8% `secret`
-- ~2% `lost`
+- ~50% `common` (the world's recorded history — the default)
+- ~25% `regional` (events whose ripple genuinely didn't propagate)
+- ~15% `cloistered` (secret-but-some-actors-know plot fuel)
+- ~8% `secret` (true conspiracies; pay off across installments)
+- ~2% `lost` (pre-history / forgotten)
+
+**Failure mode to avoid:** classifying everything as `regional`
+because each event has a region tag. The region tag says where it
+*happened*, not how far its consequences carried. The Plague of
+Loss happened in a region — but its consequences reshape the
+world's view of medicine, so it's `common`. A particular skirmish
+between two villages over a well happened in a region AND stayed
+there — that's `regional`.
 
 Adjust based on world tone: a high-paranoia world skews more
 cloistered + secret; a public-facing world stays mostly common.
+But the defaults above are the starting point, not a ceiling on
+`common`.
 
 ## `rumoured_as` writing notes
 
