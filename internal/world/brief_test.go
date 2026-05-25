@@ -124,6 +124,54 @@ func TestWriteHistoricalContext(t *testing.T) {
 	}
 }
 
+func TestStripInstallmentPrefix(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"001 — The First Hour", "The First Hour"},
+		{"001 - The First Hour", "The First Hour"},
+		{"001. The First Hour", "The First Hour"},
+		{"42 – Foo Bar", "Foo Bar"},                                     // en-dash + hyphen variants
+		{"The First Hour", "The First Hour"},                            // no prefix → unchanged
+		{"001The First Hour", "001The First Hour"},                      // digits not followed by separator → unchanged
+		{"001 missing separator", "001 missing separator"},              // digits + space but no — / - / . → unchanged
+	}
+	for _, c := range cases {
+		if got := stripInstallmentPrefix(c.in); got != c.want {
+			t.Errorf("stripInstallmentPrefix(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestBriefTitle(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"with-frontmatter", "---\nyear_override: 3600\n---\n\n# 001 — The First Hour\n\nBody.", "The First Hour"},
+		{"no-frontmatter", "# Foo\n\nBody.", "Foo"},
+		{"no-h1", "Body without heading.", ""},
+		{"empty", "", ""},
+		{"only-h2", "## Subheading\n\nBody.", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := dir + "/brief_" + c.name + ".md"
+			if err := os.WriteFile(path, []byte(c.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := BriefTitle(path); got != c.want {
+				t.Errorf("BriefTitle(%q) = %q, want %q", c.name, got, c.want)
+			}
+		})
+	}
+
+	// Non-existent file: returns empty string, not error.
+	if got := BriefTitle(dir + "/does-not-exist.md"); got != "" {
+		t.Errorf("BriefTitle(missing) = %q, want empty", got)
+	}
+}
+
 // readFile is a test helper — kept here so the production code keeps
 // its minimal surface.
 func readFile(path string) (string, error) {

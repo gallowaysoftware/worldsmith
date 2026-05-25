@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -242,7 +243,17 @@ func runStory(cmd *cobra.Command, slug string) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "\n✓ installment %d done: %s\n", n, localM4B)
 
 	if storyPublishTo != "" {
-		name := fmt.Sprintf("%03d - Installment %d.m4b", n, n)
+		// Use the brief's H1 title for the filename when present —
+		// "001 - The First Hour.m4b" reads better in Audiobookshelf's
+		// podcast UI than the generic "001 - Installment 1.m4b". Falls
+		// back to the numeric default when the brief has no H1 (or no
+		// brief was supplied for this installment).
+		var name string
+		if title := sanitizeFilenameFragment(world.BriefTitle(layout.BriefFile(n))); title != "" {
+			name = fmt.Sprintf("%03d - %s.m4b", n, title)
+		} else {
+			name = fmt.Sprintf("%03d - Installment %d.m4b", n, n)
+		}
 		dst := filepath.Join(storyPublishTo, name)
 		if err := os.MkdirAll(storyPublishTo, 0o755); err != nil {
 			return fmt.Errorf("mkdir publish dir: %w", err)
@@ -356,6 +367,40 @@ func isSlug(s string) bool {
 		}
 	}
 	return true
+}
+
+// sanitizeFilenameFragment strips characters that don't belong in a
+// filename when the path may be exposed over SMB to Windows clients
+// (Audiobookshelf libraries often live on NAS shares). Removes the
+// Windows reserved set `<>:"/\|?*` plus NUL and control chars,
+// collapses runs of whitespace into single spaces, and trims
+// leading/trailing dots and spaces (which Windows Explorer mangles).
+// Returns the empty string if the result would be empty.
+func sanitizeFilenameFragment(s string) string {
+	const forbidden = "<>:\"/\\|?*"
+	var b strings.Builder
+	prevSpace := false
+	for _, r := range s {
+		// Whitespace (incl. tab) collapses to single space.
+		if r == ' ' || r == '\t' {
+			if prevSpace {
+				continue
+			}
+			b.WriteRune(' ')
+			prevSpace = true
+			continue
+		}
+		// Strip remaining control chars (NUL, BEL, etc.) + DEL.
+		if r < 0x20 || r == 0x7f {
+			continue
+		}
+		if strings.ContainsRune(forbidden, r) {
+			continue
+		}
+		prevSpace = false
+		b.WriteRune(r)
+	}
+	return strings.Trim(b.String(), " .")
 }
 
 // copyFile streams src → dst with the system default buffer.

@@ -134,6 +134,63 @@ func FilterOptsFromBrief(brief BriefFront, cal Calendar) FilterOpts {
 	}
 }
 
+// BriefTitle reads the brief's body and returns its descriptive
+// title — the first H1 heading, with any leading installment-number
+// prefix stripped. Designed for filename construction in the
+// `--publish-to` flow: a brief whose H1 is `# 001 — The First Hour`
+// returns `The First Hour`, and the caller wraps that as
+// `001 - The First Hour.m4b`. A brief without an H1 (or whose H1 is
+// only the installment number) returns the empty string; callers
+// should fall back to a numeric default.
+//
+// The strip-prefix logic handles three common patterns: `001 — Foo`,
+// `001 - Foo`, `001. Foo` (em-dash, hyphen, period separators). A
+// title that doesn't lead with the installment number is returned
+// unchanged.
+//
+// Returns the empty string on read error or no H1 found; the empty
+// string is the "fall back to default" signal, not an error.
+func BriefTitle(path string) string {
+	_, body, err := ParseBrief(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "# ") {
+			continue
+		}
+		title := strings.TrimSpace(strings.TrimPrefix(trimmed, "# "))
+		title = stripInstallmentPrefix(title)
+		return title
+	}
+	return ""
+}
+
+// stripInstallmentPrefix removes a leading "NNN — " / "NNN - " /
+// "NNN. " pattern from a brief title. Hand-written authors often
+// include the installment number in the H1 ("# 001 — The First
+// Hour"); the filename already carries `%03d -` so the title
+// component shouldn't duplicate it.
+func stripInstallmentPrefix(title string) string {
+	// Walk past any leading digits.
+	i := 0
+	for i < len(title) && title[i] >= '0' && title[i] <= '9' {
+		i++
+	}
+	if i == 0 {
+		return title
+	}
+	rest := strings.TrimLeft(title[i:], " ")
+	// Accept em-dash, hyphen, or period as the separator.
+	for _, sep := range []string{"— ", "– ", "- ", ". "} {
+		if strings.HasPrefix(rest, sep) {
+			return strings.TrimSpace(rest[len(sep):])
+		}
+	}
+	return title
+}
+
 // WriteHistoricalContext computes the filtered timeline view for
 // this installment and writes it as `historical_context.md` into
 // the supplied run directory. Returns the absolute path of the
