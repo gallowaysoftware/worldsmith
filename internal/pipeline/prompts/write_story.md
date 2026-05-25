@@ -27,6 +27,17 @@ guided by the brief, in the voice the world bible specifies.
 
 {{ readFile .inputs.brief_file }}
 
+# Scene plan (the planning pass produced this; honour it)
+
+```json
+{{ .stages.outline_story.output }}
+```
+
+Each scene above has an explicit `word_budget`. The total across
+scenes is the installment's target length. **Hit each scene's
+word budget**, not just the brief's beats. A scene with a 1,500
+budget is a 1,500-word scene; don't write 300 and move on.
+
 ---
 
 # Your task
@@ -45,7 +56,15 @@ opening sentence.
 2. **Honour the bible.** Don't break magic-system rules, don't
    contradict established history, don't change a faction's stance
    without a beat that earns it. The bible is canon; this
-   installment adds to it, doesn't overwrite.
+   installment adds to it, doesn't overwrite. **If the bible's
+   `Rules` section says "no magic" / "no monsters" / "no prophecy"
+   / "no fantasy elements," that's absolute. A scene about a
+   "closed box" with deliberate ambiguity is NOT permission to
+   invent its supernatural contents. When the brief leaves
+   something ambiguous, the prose preserves that ambiguity. Fill
+   word budget with proximity to the unknown (character business,
+   silence, sensory texture, half-spoken dialogue) — not with
+   invented exposition that breaks the world's rules.**
 
 3. **Honour the canon-so-far.** Recurring characters keep their
    established voices; previously-named locations stay named the

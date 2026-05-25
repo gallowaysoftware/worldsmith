@@ -119,8 +119,34 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 	//     synthetic.
 	thinkingOff := map[string]any{"enable_thinking": false}
 
+	// Outline pass: before the writer drafts, the planner turns the
+	// brief's bullet-list of beats into a per-scene plan with explicit
+	// word budgets, canon hooks, and turn-of-the-scene specifics. The
+	// research case for this is DOC (Yang et al., ACL 2023) — a hierarchical
+	// outliner stage between brief and prose raised plot coherence by
+	// 22.5% in their eval. Empirically, worldsmith's earlier under-
+	// length problem (002 v1 landing at 4,482 words for a 7,500-target
+	// brief) was the model treating beats as summary-sized rather than
+	// scene-sized; the outline forces a per-scene word budget the writer
+	// has to honour.
+	outline := p.Text("outline_story").
+		Capability("long_form").
+		PromptFS(PromptsFS, "outline_story.md").
+		OutputFormatJSON().
+		Output("outline.json").
+		Param("temperature", 0.4).
+		Param("max_tokens", 8192).
+		Param("chat_template_kwargs", thinkingOff).
+		Retry(&vamp.RetryPolicy{
+			MaxAttempts:    3,
+			InitialBackoff: 5 * time.Second,
+			MaxBackoff:     30 * time.Second,
+			RetryOn:        []string{"transient", "invalid_output"},
+		})
+
 	draft := p.Text("write_story").
 		Capability("long_form").
+		After(outline).
 		PromptFS(PromptsFS, "write_story.md").
 		Output("draft.md").
 		Param("temperature", 0.8).
