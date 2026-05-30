@@ -16,17 +16,32 @@ THE FORMAT FOR THIS ONE (commit to it fully):
 That's the brief. Build the whole video around that format using this world's
 actual characters, factions, and locations by name.
 
+MOST IMPORTANT RULE — make it land for a COLD viewer:
+- Assume the viewer has NEVER heard of this world and gives you 25 seconds on a
+  scroll. The video must make complete sense and pay off ENTIRELY on its own.
+  No prior knowledge. If it only works for someone who read the world bible,
+  it's wrong.
+- Open on a concrete, instantly-readable image + hook — a person doing/feeling
+  something a stranger immediately gets. NEVER open on lore, history, or a
+  faction name.
+- The world is your raw material, not your subject. Use AT MOST one or two
+  proper nouns total, and the moment you use one, make its meaning obvious from
+  what's shown or said ("the glass that hums louder the longer you stand still")
+  — never just name a system/faction and assume it means anything.
+- Stakes must be HUMAN and visceral (pain, fear, greed, embarrassment, wanting
+  something), not lore-dependent. Show what the world DOES to a person, don't
+  explain how the world works.
+
 Tone & rules of the game:
-- TikTok is PUNCH. Shot 1 is a scroll-stopper — a hook line that freezes a
-  thumb. No throat-clearing, no slow establishing shot.
-- Be entertaining and a little meta/self-aware — internet-native voice, not
-  earnest cinema. Confidence and rhythm beat solemnity. It can be funny, eerie,
-  or hype, but it must have ENERGY.
+- TikTok is PUNCH. Shot 1 is a scroll-stopper. No throat-clearing, no slow
+  establishing shot.
+- Entertaining and a little meta/self-aware — internet-native voice, not
+  earnest cinema. Funny, eerie, or hype, but always ENERGY.
 - Every narration line is a hook, a punchline, or a reveal — 6 to 14 words,
-  spoken aloud, high energy. Vary the rhythm. Land a kicker (or a loop-back to
-  shot 1) on the final shot.
-- Make it specific to THIS world — real names, real places. The humor/horror
-  comes from concrete details, never generic vibes.
+  spoken aloud, plain spoken English a stranger gets on first listen. Vary the
+  rhythm. Land a kicker (or a loop-back to shot 1) on the final shot.
+- Specific and concrete over abstract — but the specifics are sensory and
+  human, not encyclopedic.
 
 Return a SINGLE JSON object, no prose, no fences, matching exactly:
 
