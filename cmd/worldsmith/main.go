@@ -61,6 +61,8 @@ profiles (worldsmith activate brings them all up).`,
 	root.AddCommand(arcCommand())
 	root.AddCommand(storyCommand())
 	root.AddCommand(novelCommand())
+	root.AddCommand(worldgenCommand())
+	root.AddCommand(sceneCommand())
 	root.AddCommand(listCommand())
 	root.AddCommand(activateCommand())
 	root.AddCommand(doctorCommand())

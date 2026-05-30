@@ -4,11 +4,11 @@
 // package owns the bookkeeping.
 //
 // Layout mirrors fake-crime's series state with three differences:
-// 1) world bible is user-authored, not LLM-generated;
-// 2) per-installment briefs (briefs/NNN.md) replace arc.json's
-//    fixed beat sheet as the primary driver;
-// 3) chapters within a single installment are tracked (for novels)
-//    via installments/NNN/chapters/.
+//  1. world bible is user-authored, not LLM-generated;
+//  2. per-installment briefs (briefs/NNN.md) replace arc.json's
+//     fixed beat sheet as the primary driver;
+//  3. chapters within a single installment are tracked (for novels)
+//     via installments/NNN/chapters/.
 package world
 
 import (
@@ -44,7 +44,7 @@ func DefaultRoot() string {
 // MkdirAll calls don't clobber existing content.
 func Open(slug string) (Layout, error) {
 	root := filepath.Join(DefaultRoot(), slug)
-	for _, sub := range []string{"briefs", "installments"} {
+	for _, sub := range []string{"briefs", "installments", "scenes"} {
 		if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
 			return Layout{}, err
 		}
@@ -52,12 +52,51 @@ func Open(slug string) (Layout, error) {
 	return Layout{Root: root}, nil
 }
 
-func (l Layout) WorldFile() string      { return filepath.Join(l.Root, "world.md") }
-func (l Layout) CharactersFile() string { return filepath.Join(l.Root, "characters.json") }
-func (l Layout) ArcFile() string        { return filepath.Join(l.Root, "arc.json") }
-func (l Layout) CanonFile() string      { return filepath.Join(l.Root, "canon.md") }
-func (l Layout) BriefsDir() string      { return filepath.Join(l.Root, "briefs") }
+func (l Layout) WorldFile() string       { return filepath.Join(l.Root, "world.md") }
+func (l Layout) CharactersFile() string  { return filepath.Join(l.Root, "characters.json") }
+func (l Layout) ArcFile() string         { return filepath.Join(l.Root, "arc.json") }
+func (l Layout) CanonFile() string       { return filepath.Join(l.Root, "canon.md") }
+func (l Layout) BriefsDir() string       { return filepath.Join(l.Root, "briefs") }
 func (l Layout) InstallmentsDir() string { return filepath.Join(l.Root, "installments") }
+func (l Layout) ScenesDir() string       { return filepath.Join(l.Root, "scenes") }
+
+// SceneDir returns the per-scene output dir (1-indexed).
+func (l Layout) SceneDir(n int) string {
+	return filepath.Join(l.ScenesDir(), fmt.Sprintf("%03d", n))
+}
+
+// SceneFile is a path helper inside a scene dir.
+func (l Layout) SceneFile(n int, name string) string {
+	return filepath.Join(l.SceneDir(n), name)
+}
+
+// NextScene returns the smallest 1-indexed scene number without a finished
+// final.mp4.
+func NextScene(l Layout) (int, error) {
+	entries, err := os.ReadDir(l.ScenesDir())
+	if err != nil && !os.IsNotExist(err) {
+		return 0, err
+	}
+	done := map[int]bool{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(e.Name(), "%d", &n); err != nil {
+			continue
+		}
+		if _, err := os.Stat(l.SceneFile(n, "final.mp4")); err == nil {
+			done[n] = true
+		}
+	}
+	for n := 1; n <= 999; n++ {
+		if !done[n] {
+			return n, nil
+		}
+	}
+	return 0, fmt.Errorf("more than 999 scenes — bail out")
+}
 
 // BriefFile returns the brief path for installment n (1-indexed).
 func (l Layout) BriefFile(n int) string {
@@ -251,9 +290,9 @@ func LoadCharacters(l Layout) (CharactersDoc, error) {
 // rather than starting at a blank prompt.
 func ScaffoldWorld(l Layout, slug string) error {
 	files := map[string]string{
-		l.WorldFile():       worldStub(slug),
-		l.CharactersFile():  charactersStub(),
-		l.CanonFile():       "",
+		l.WorldFile():      worldStub(slug),
+		l.CharactersFile(): charactersStub(),
+		l.CanonFile():      "",
 	}
 	for path, body := range files {
 		// Don't clobber existing user content on re-init.
