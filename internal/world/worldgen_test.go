@@ -66,6 +66,38 @@ func TestValidateRejectsThinWorld(t *testing.T) {
 	}
 }
 
+func TestNormalizeVoice(t *testing.T) {
+	cases := map[string]string{
+		"am_fenrir": "am_fenrir", // known → kept
+		"af_bella":  "af_bella",
+		"am_fenfir": "am_fenrir", // typo → fallback
+		"":          "am_fenrir", // empty → fallback
+		"zz_bogus":  "am_fenrir",
+	}
+	for in, want := range cases {
+		if got := NormalizeVoice(in); got != want {
+			t.Errorf("NormalizeVoice(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestWriteWorldFromSeedNormalizesVoices(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", tmp)
+	l, _ := Open("voice-world")
+	s, _ := ParseWorldSeed([]byte(sampleSeed))
+	s.Characters[0].VoiceID = "am_fenfir" // typo
+	if err := WriteWorldFromSeed(l, s, []byte(sampleSeed)); err != nil {
+		t.Fatal(err)
+	}
+	var doc charactersForFile
+	cj, _ := os.ReadFile(l.CharactersFile())
+	_ = json.Unmarshal(cj, &doc)
+	if doc.Characters[0].VoiceID != "am_fenrir" {
+		t.Errorf("voice not normalized: %q", doc.Characters[0].VoiceID)
+	}
+}
+
 func TestWriteWorldFromSeed(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", tmp)

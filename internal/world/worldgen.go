@@ -79,6 +79,27 @@ func (s WorldSeed) Slug() string {
 	return out
 }
 
+// NarratorVoice is the default Kokoro voice and the fallback when a
+// character's assigned voice_id isn't a known voice.
+const NarratorVoice = "am_fenrir"
+
+// validVoices is the set of Kokoro voice ids the seed_world prompt offers.
+// The LLM occasionally typos one (e.g. "am_fenfir"); an unknown voice makes
+// Kokoro 400 and fails the whole scene, so we normalize to NarratorVoice.
+var validVoices = map[string]bool{
+	"am_fenrir": true, "am_michael": true, "am_puck": true,
+	"am_adam": true, "am_eric": true,
+	"af_bella": true, "af_nicole": true, "bf_emma": true,
+}
+
+// NormalizeVoice returns v if it's a known voice, else NarratorVoice.
+func NormalizeVoice(v string) string {
+	if validVoices[strings.TrimSpace(v)] {
+		return strings.TrimSpace(v)
+	}
+	return NarratorVoice
+}
+
 // charactersForFile is the on-disk characters.json shape (matches what the
 // scene_outline prompt reads back: look + voice_id drive image gen + casting).
 type charactersForFile struct {
@@ -98,6 +119,11 @@ func WriteWorldFromSeed(l Layout, s WorldSeed, seedJSON []byte) error {
 		}
 	}
 	if _, err := os.Stat(l.CharactersFile()); err != nil && os.IsNotExist(err) {
+		// Normalize voice_ids to known Kokoro voices so a hallucinated/typo'd
+		// voice can't 400 the TTS stage and fail the whole scene later.
+		for i := range s.Characters {
+			s.Characters[i].VoiceID = NormalizeVoice(s.Characters[i].VoiceID)
+		}
 		doc := charactersForFile{Characters: s.Characters}
 		b, err := json.MarshalIndent(doc, "", "  ")
 		if err != nil {

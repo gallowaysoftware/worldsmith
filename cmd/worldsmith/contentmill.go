@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -219,6 +220,14 @@ func runScene(cmd *cobra.Command, slug string) error {
 		return fmt.Errorf("scene %d phase 1: %w", n, err)
 	}
 
+	// Defensive: normalize every shot's voice_id to a known Kokoro voice so a
+	// hallucinated/typo'd voice from the outline LLM can't 400 the TTS stage
+	// and fail the whole render. (worldgen already normalizes characters.json,
+	// but the outline can introduce its own.)
+	if err := normalizeShotVoices(cfg.ShotsFile); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  note: normalize shot voices: %v\n", err)
+	}
+
 	// Free the LLM's VRAM before the image model loads — they can't co-reside
 	// on a 32GB card. Best-effort: a failure here just means the daemon's
 	// VRAM preflight will reject the image stage with a clear message.
@@ -251,6 +260,38 @@ func runScene(cmd *cobra.Command, slug string) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "  published: %s\n", dst)
 	}
 	return nil
+}
+
+// normalizeShotVoices rewrites shots.json in place, replacing any shot's
+// voice_id that isn't a known Kokoro voice with the narrator fallback.
+func normalizeShotVoices(path string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var doc struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return err
+	}
+	changed := false
+	for _, it := range doc.Items {
+		if v, ok := it["voice_id"].(string); ok {
+			if nv := world.NormalizeVoice(v); nv != v {
+				it["voice_id"] = nv
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return nil
+	}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0o644)
 }
 
 // freeActiveProfile shells `vibe stop` to unload the active LLM profile so the
