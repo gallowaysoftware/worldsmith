@@ -15,9 +15,9 @@ You have read:
 {{ readFile .inputs.characters_file }}
 ```
 
-# Canon so far
+# Canon so far (relevant to this installment)
 
-{{ readFile .inputs.canon_file }}
+{{ readFile .inputs.canon_relevant_file }}
 
 {{ readFile .inputs.historical_context_file }}
 
@@ -76,14 +76,45 @@ gets:
 4. **Turn** — what shifts in the scene. A small recognition, a
    gesture, a half-remembered phrase, a piece of weather that
    answers something.
-5. **Canon / timeline hooks** — at least one specific reference
+5. **Emotional shift** — the POV character's felt state at the
+   scene's open vs. its close, as a direction not an adjective
+   ("guarded → exposed", "numb → afraid", "hopeful → resigned").
+   The shift can be small, but it should not be flat: a scene that
+   opens and closes on the same charge is a scene that hasn't
+   turned. Adjacent scenes should not all shift the same direction —
+   a story that only darkens (or only lifts) reads monotone.
+6. **Tension** — what keeps the reader leaning in. State three
+   things: the *uncertainty* (the open question the scene raises but
+   does not answer), the *stakes* (what the POV character hopes for
+   vs. fears — both, in tension), and what is *withheld* (the thing
+   the character or reader is denied this scene). A scene with no
+   uncertainty is exposition; give it one.
+7. **Canon / timeline hooks** — at least one specific reference
    the scene will fold in: an event from the timeline, a fact from
    canon.md, a character's voice tic, a historical date. The
    writer needs the hook to anchor the scene.
-6. **Approximate word budget** — your distribution of the brief's
+8. **Approximate word budget** — your distribution of the brief's
    total target across scenes. Don't give the writer "and finally"
    scenes of 200 words; if a beat genuinely doesn't need 1000+
    words, fold it into a neighbouring scene.
+
+# Shape across the installment
+
+Beyond the per-scene fields, the installment as a whole has a shape.
+Before listing scenes, decide:
+
+- **Where the turning point falls.** The beat where the installment
+  pivots — the irreversible choice, the revelation, the point of no
+  return — should land in the back half, not scene one. LLMs default
+  to resolving too early; resist it. Don't spend the climax's charge
+  in the opening.
+- **Don't resolve everything.** A serialised installment earns the
+  next one. Leave at least one tension open at the close — a question
+  the reader carries forward — unless the brief explicitly asks for a
+  clean resolution.
+- **Vary the rhythm.** Alternate higher-pressure scenes with quieter
+  ones. Three escalating action scenes in a row flatten as surely as
+  three quiet ones; the contrast is what makes either register land.
 
 # Output
 
@@ -92,6 +123,7 @@ Strict JSON, no preamble, no commentary. Schema:
 ```json
 {
   "installment_target_words": 7500,
+  "turning_point_scene": "<id of the scene where the installment pivots>",
   "scenes": [
     {
       "id": "scene_1",
@@ -100,6 +132,13 @@ Strict JSON, no preamble, no commentary. Schema:
       "goal": "<POV character's scene-level goal, 1 sentence>",
       "conflict": "<what's resisting, 1 sentence>",
       "turn": "<the shift, 1 sentence>",
+      "emotional_shift": "<open-charge → close-charge>",
+      "tension": {
+        "uncertainty": "<the open question this scene raises>",
+        "hope": "<what the POV character wants to be true>",
+        "fear": "<what they dread instead>",
+        "withheld": "<what the scene denies character or reader>"
+      },
       "canon_hooks": ["<event id from timeline>", "<canon fact>", "<character tic>"],
       "word_budget": 1500
     }
@@ -108,6 +147,7 @@ Strict JSON, no preamble, no commentary. Schema:
 ```
 
 The sum of `word_budget` across scenes should equal
-`installment_target_words` ± 10%.
+`installment_target_words` ± 10%. `turning_point_scene` must be the
+id of a scene in the back half of the list.
 
 First byte: `{`. Last byte: `}`. No markdown fences.

@@ -84,6 +84,28 @@ this?** If no, leave it abstract or remove the passage.
   stood still," "knew it in his bones." Replace with something
   specific to this character / setting; don't replace cliché with
   cliché.
+- **LLM slop — the tells of machine prose.** These words and shapes
+  are wildly over-represented in generated fiction; hunt them and
+  cut or replace with something concrete:
+  - Over-used verbs/nouns: *shimmer, glint, pulse, thrum, hum,
+    cascade, weave/woven, tapestry, dance(d), ghost(ed), whisper(ed)
+    (of non-speech), testament, palpable, symphony, kaleidoscope,
+    liminal, ineffable.* A "thrumming" anything is almost always slop.
+  - Body-as-emotion-readout: *breath she didn't know she was
+    holding, a knot in her stomach, jaw tightened, something
+    flickered behind his eyes, a shiver down the spine.* Render the
+    feeling through a specific action instead.
+  - Epithet stacking: *the older man, the younger woman, the taller
+    figure* used as a name substitute. Use the name or a concrete
+    detail.
+- **The "not X, but Y" reflex.** Generated prose leans hard on the
+  antithesis cadence — "It wasn't anger, but something colder," "Not
+  a sound, but the absence of one," "She didn't walk; she drifted."
+  One per scene at most, and only when the contrast earns its keep.
+  If you see two in a paragraph, rewrite one as a plain declarative.
+- **Hollow intensifiers + portent.** *Somehow, something, a kind of,
+  as if the world itself, for a moment that stretched, in that
+  instant.* Vagueness dressed as weight. Name the thing or cut it.
 - **Filtering.** "She saw the lighthouse" → "The lighthouse." Strip
   the perceptual frame when you can without losing POV.
 - **Telling the emotional beat.** "She felt afraid" → render through

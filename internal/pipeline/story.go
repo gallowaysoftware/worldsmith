@@ -20,6 +20,15 @@ type StoryConfig struct {
 	// CanonFile is the path to canon.md (auto-grown across
 	// installments). Must exist; may be empty for installment 1.
 	CanonFile string
+	// CanonRelevantFile is the path to the relevance-filtered canon
+	// view for this installment — the subset of canon.md scored
+	// against the brief, with world rules and on-stage-actor facts
+	// always kept. The outline + writer stages read this instead of
+	// the full canon so a long-running series doesn't dump every
+	// fact ever recorded into the prose prompts. When empty it
+	// defaults to CanonFile (the full canon), so small worlds and
+	// callers that don't compute a filtered view still work.
+	CanonRelevantFile string
 	// PriorsFile is the path to the concatenated prior-installment
 	// summaries. Must exist; empty for installment 1.
 	PriorsFile string
@@ -34,6 +43,12 @@ type StoryConfig struct {
 	// by the CLI; empty file when the world has no timeline.json or
 	// no events pass the filter.
 	HistoricalContextFile string
+	// OutlineJSON, when non-empty, is a pre-selected scene plan
+	// (chosen by the CLI's candidate-rerank step) that replaces the
+	// generated outline_story stage. The pipeline emits it verbatim
+	// so the writer builds on the chosen plan. Empty (the default)
+	// means generate the outline in-pipeline as usual.
+	OutlineJSON string
 	// NarratorVoice is the Kokoro voice id to use. Default
 	// "am_fenrir" (warm baritone) — overridden via the CLI flag.
 	NarratorVoice string
@@ -52,6 +67,7 @@ type StoryConfig struct {
 //	canon_delta    (text)   → canon_delta.md — atomic facts the next
 //	                                          installment must know
 //	summarize      (text)   → summary.md   — short recap → priors_file
+//	continuity_check (text) → continuity_report.md — contradiction audit
 //	compose_cover  (text)   → cover_prompt.txt
 //	generate_cover (comfyui) → cover.png
 //	showrunner     (text/json) → script.json — paragraph segments
@@ -69,6 +85,9 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 	if cfg.KokoroURL == "" {
 		cfg.KokoroURL = "http://127.0.0.1:8880"
 	}
+	if cfg.CanonRelevantFile == "" {
+		cfg.CanonRelevantFile = cfg.CanonFile
+	}
 
 	p := vamp.New("worldsmith-story").
 		Describe("Generate one installment of a serialised work of fiction: prose → audiobook.")
@@ -79,6 +98,8 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 		vamp.Describe("Path to characters.json."))
 	p.Input("canon_file", vamp.Required(), vamp.WithDefault(cfg.CanonFile),
 		vamp.Describe("Path to canon.md (may be empty for installment 1)."))
+	p.Input("canon_relevant_file", vamp.WithDefault(cfg.CanonRelevantFile),
+		vamp.Describe("Path to the relevance-filtered canon view (full canon when small). Outline + writer read this; canon_delta + continuity read the full canon_file."))
 	p.Input("priors_file", vamp.Required(), vamp.WithDefault(cfg.PriorsFile),
 		vamp.Describe("Path to concatenated prior-installment summaries (may be empty for #1)."))
 	p.Input("brief_file", vamp.Required(), vamp.WithDefault(cfg.BriefFile),
@@ -129,20 +150,33 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 	// brief) was the model treating beats as summary-sized rather than
 	// scene-sized; the outline forces a per-scene word budget the writer
 	// has to honour.
-	outline := p.Text("outline_story").
-		Capability("long_form").
-		PromptFS(PromptsFS, "outline_story.md").
-		OutputFormatJSON().
-		Output("outline.json").
-		Param("temperature", 0.4).
-		Param("max_tokens", 8192).
-		Param("chat_template_kwargs", thinkingOff).
-		Retry(&vamp.RetryPolicy{
-			MaxAttempts:    3,
-			InitialBackoff: 5 * time.Second,
-			MaxBackoff:     30 * time.Second,
-			RetryOn:        []string{"transient", "invalid_output"},
-		})
+	var outline vamp.Ref
+	if cfg.OutlineJSON != "" {
+		// A pre-selected outline (the candidate-rerank step upstream
+		// generated several and chose this one). Emit it verbatim
+		// through a render stage so the writer reads the chosen plan
+		// via .stages.outline_story.output exactly as it would a
+		// freshly-generated one — no other stage needs to change.
+		outline = p.Render("outline_story").
+			Prompt(cfg.OutlineJSON).
+			OutputFormatJSON().
+			Output("outline.json")
+	} else {
+		outline = p.Text("outline_story").
+			Capability("long_form").
+			PromptFS(PromptsFS, "outline_story.md").
+			OutputFormatJSON().
+			Output("outline.json").
+			Param("temperature", 0.4).
+			Param("max_tokens", 8192).
+			Param("chat_template_kwargs", thinkingOff).
+			Retry(&vamp.RetryPolicy{
+				MaxAttempts:    3,
+				InitialBackoff: 5 * time.Second,
+				MaxBackoff:     30 * time.Second,
+				RetryOn:        []string{"transient", "invalid_output"},
+			})
+	}
 
 	draft := p.Text("write_story").
 		Capability("long_form").
@@ -185,6 +219,23 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 		Output("summary.md").
 		Param("temperature", 0.3).
 		Param("max_tokens", 4096).
+		Param("chat_template_kwargs", thinkingOff)
+
+	// Continuity audit: read the edited prose back against the bible,
+	// canon, characters, and prior summaries and emit a report of any
+	// contradictions (dead characters reappearing, magic-system
+	// breaks, renamed entities, knowledge a character can't have).
+	// Report-only — it does not gate the run or rewrite the prose; the
+	// report lands beside the m4b as continuity_report.md for human
+	// audit. Low temperature: this is a checking task, not a creative
+	// one, and we want it conservative about false positives.
+	p.Text("continuity_check").
+		Capability("long_form").
+		After(edited).
+		PromptFS(PromptsFS, "continuity_check.md").
+		Output("continuity_report.md").
+		Param("temperature", 0.1).
+		Param("max_tokens", 8192).
 		Param("chat_template_kwargs", thinkingOff)
 
 	// ---- cover ----

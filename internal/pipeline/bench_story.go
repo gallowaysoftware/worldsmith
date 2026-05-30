@@ -18,6 +18,7 @@ type BenchStoryConfig struct {
 	WorldFile             string
 	CharactersFile        string
 	CanonFile             string
+	CanonRelevantFile     string
 	PriorsFile            string
 	BriefFile             string
 	HistoricalContextFile string
@@ -32,6 +33,9 @@ type BenchStoryConfig struct {
 // temporarily mapped to each candidate, capturing the story.md
 // output side-by-side for human-judged comparison.
 func BuildBenchStory(cfg BenchStoryConfig) (*vamp.Pipeline, error) {
+	if cfg.CanonRelevantFile == "" {
+		cfg.CanonRelevantFile = cfg.CanonFile
+	}
 	p := vamp.New("worldsmith-bench-story").
 		Describe("Prose-only run of the story pipeline (write + edit) for candidate-model A/B testing.")
 
@@ -41,6 +45,8 @@ func BuildBenchStory(cfg BenchStoryConfig) (*vamp.Pipeline, error) {
 		vamp.Describe("Path to characters.json."))
 	p.Input("canon_file", vamp.Required(), vamp.WithDefault(cfg.CanonFile),
 		vamp.Describe("Path to canon.md."))
+	p.Input("canon_relevant_file", vamp.WithDefault(cfg.CanonRelevantFile),
+		vamp.Describe("Path to the relevance-filtered canon view (defaults to full canon)."))
 	p.Input("priors_file", vamp.Required(), vamp.WithDefault(cfg.PriorsFile),
 		vamp.Describe("Path to priors.md."))
 	p.Input("brief_file", vamp.Required(), vamp.WithDefault(cfg.BriefFile),

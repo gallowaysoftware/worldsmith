@@ -13,9 +13,9 @@ guided by the brief, in the voice the world bible specifies.
 {{ readFile .inputs.characters_file }}
 ```
 
-# Canon so far
+# Canon so far (relevant to this installment)
 
-{{ readFile .inputs.canon_file }}
+{{ readFile .inputs.canon_relevant_file }}
 
 {{ readFile .inputs.historical_context_file }}
 
@@ -37,6 +37,24 @@ Each scene above has an explicit `word_budget`. The total across
 scenes is the installment's target length. **Hit each scene's
 word budget**, not just the brief's beats. A scene with a 1,500
 budget is a 1,500-word scene; don't write 300 and move on.
+
+Each scene also carries an `emotional_shift` and a `tension` block
+(uncertainty / hope / fear / withheld). Use them:
+
+- **Honour the emotional_shift.** The POV character should end the
+  scene at a different charge than they began it. Don't state the
+  charge ("she felt exposed") — render it through what changes in
+  what they notice, do, or won't say.
+- **Keep the tension's `withheld` withheld.** The scene's job is to
+  raise its `uncertainty`, not resolve it. Do not answer the open
+  question early, and do not narrate the withheld thing onto the
+  page. Proximity, not reveal.
+- **The `hope` and `fear` are both live.** The scene works when the
+  reader can feel the character wanting one and dreading the other
+  at the same time — not when the prose announces which wins.
+- The plan names a `turning_point_scene`. That scene carries the
+  installment's pivot; give it weight and don't let an earlier scene
+  steal its charge by resolving the central question first.
 
 ---
 
