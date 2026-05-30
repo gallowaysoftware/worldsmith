@@ -57,6 +57,8 @@ profiles (worldsmith activate brings them all up).`,
 	}
 
 	root.AddCommand(initCommand())
+	root.AddCommand(briefCommand())
+	root.AddCommand(arcCommand())
 	root.AddCommand(storyCommand())
 	root.AddCommand(novelCommand())
 	root.AddCommand(listCommand())
@@ -332,6 +334,226 @@ func fallbackStr(s, d string) string {
 		return d
 	}
 	return strings.TrimSpace(s)
+}
+
+func briefCommand() *cobra.Command {
+	var (
+		slug        string
+		installment int
+		steer       string
+		targetWords int
+		force       bool
+	)
+	cmd := &cobra.Command{
+		Use:   "brief <slug>",
+		Short: "Draft the next installment's brief from where the story stands.",
+		Long: `brief reads the world bible, canon, and prior summaries and drafts
+the next installment's briefs/NNN.md — the human direction document
+the story pipeline consumes. It writes a DRAFT for you to edit; it
+never runs the story off it.
+
+--steer "<one line>" focuses the installment; omit it to let the model
+free-run the arc. --installment N targets a specific number (default:
+the next number without a brief). Refuses to overwrite an existing
+brief unless --force.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				slug = args[0]
+			}
+			if slug == "" {
+				return fmt.Errorf("world slug required (positional arg or --slug)")
+			}
+			return runBrief(cmd, slug, installment, steer, targetWords, force)
+		},
+	}
+	cmd.Flags().StringVar(&slug, "slug", "", "World slug (alternative to positional arg).")
+	cmd.Flags().IntVar(&installment, "installment", 0, "Installment number to draft (0 = next without a brief).")
+	cmd.Flags().StringVar(&steer, "steer", "", "Optional one-line direction for this installment.")
+	cmd.Flags().IntVar(&targetWords, "target-words", 6500, "Target prose length the beats should sum to.")
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing brief.")
+	return cmd
+}
+
+func runBrief(cmd *cobra.Command, slug string, installment int, steer string, targetWords int, force bool) error {
+	layout, err := world.Open(slug)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(layout.WorldFile()); err != nil {
+		return fmt.Errorf("world.md not found at %s — run `worldsmith init %s` first", layout.WorldFile(), slug)
+	}
+
+	n := installment
+	if n == 0 {
+		n, err = world.NextBriefNumber(layout)
+		if err != nil {
+			return err
+		}
+	}
+	briefPath := layout.BriefFile(n)
+	if !force {
+		if _, err := os.Stat(briefPath); err == nil {
+			return fmt.Errorf("brief %03d already exists at %s — edit it, or pass --force to regenerate", n, briefPath)
+		}
+	}
+
+	canonPath, err := world.EnsureCanonFile(layout)
+	if err != nil {
+		return fmt.Errorf("ensure canon: %w", err)
+	}
+	genDir := filepath.Join(layout.BriefsDir(), ".gen", fmt.Sprintf("%03d", n))
+	if err := os.MkdirAll(genDir, 0o755); err != nil {
+		return err
+	}
+	priorsPath, err := world.EnsurePriorsFile(layout, genDir, n)
+	if err != nil {
+		return fmt.Errorf("ensure priors: %w", err)
+	}
+	timeline, err := world.LoadTimeline(layout)
+	if err != nil {
+		return fmt.Errorf("load timeline: %w", err)
+	}
+	histPath, err := world.WriteHistoricalContext(genDir, timeline.Events,
+		world.FilterOpts{YearCutoff: timeline.Calendar.CurrentYear})
+	if err != nil {
+		return fmt.Errorf("write historical context: %w", err)
+	}
+	exemplar := os.DevNull
+	if last := world.LatestBriefNumber(layout); last > 0 && last != n {
+		exemplar = layout.BriefFile(last)
+	}
+
+	cfg := pipeline.BriefConfig{
+		InstallmentNumber:     n,
+		TargetWords:           targetWords,
+		Steer:                 steer,
+		WorldFile:             layout.WorldFile(),
+		CharactersFile:        layout.CharactersFile(),
+		CanonFile:             canonPath,
+		PriorsFile:            priorsPath,
+		HistoricalContextFile: histPath,
+		ExemplarBriefFile:     exemplar,
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "world: %s\n", slug)
+	fmt.Fprintf(cmd.OutOrStdout(), "drafting brief %03d (target %d words)...\n\n", n, targetWords)
+
+	root, err := vamp.BuildRoot(func() (*vamp.Pipeline, error) {
+		return pipeline.BuildBrief(cfg)
+	})
+	if err != nil {
+		return err
+	}
+	root.SetArgs([]string{"run", "--run-dir", genDir, "--no-cache"})
+	if err := root.Execute(); err != nil {
+		return fmt.Errorf("brief %d: %w", n, err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(genDir, "brief.md"))
+	if err != nil {
+		return fmt.Errorf("read generated brief: %w", err)
+	}
+	if err := os.WriteFile(briefPath, raw, 0o644); err != nil {
+		return fmt.Errorf("write brief: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "\n✓ draft brief written: %s\n", briefPath)
+	fmt.Fprintf(cmd.OutOrStdout(), "  review/edit it, then: worldsmith story %s\n", slug)
+	return nil
+}
+
+func arcCommand() *cobra.Command {
+	var (
+		slug     string
+		premise  string
+		chapters int
+		force    bool
+	)
+	cmd := &cobra.Command{
+		Use:   "arc <slug>",
+		Short: "Draft a novel's chapter arc (arc.json) from a scope premise.",
+		Long: `arc reads the world bible and an optional scope premise and drafts
+arc.json — the ordered chapter beats that worldsmith novel runs, one
+chapter at a time. It writes a DRAFT for you to edit; it never runs
+the novel off it.
+
+--premise "<scope>" sets the book's spine; omit it to let the model
+propose the arc from the world alone. --chapters N sets the target
+length. Refuses to overwrite an existing arc.json unless --force.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				slug = args[0]
+			}
+			if slug == "" {
+				return fmt.Errorf("world slug required (positional arg or --slug)")
+			}
+			return runArc(cmd, slug, premise, chapters, force)
+		},
+	}
+	cmd.Flags().StringVar(&slug, "slug", "", "World slug (alternative to positional arg).")
+	cmd.Flags().StringVar(&premise, "premise", "", "Optional scope/premise for the whole novel.")
+	cmd.Flags().IntVar(&chapters, "chapters", 12, "Approximate chapter count.")
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing arc.json.")
+	return cmd
+}
+
+func runArc(cmd *cobra.Command, slug, premise string, chapters int, force bool) error {
+	layout, err := world.Open(slug)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(layout.WorldFile()); err != nil {
+		return fmt.Errorf("world.md not found at %s — run `worldsmith init %s` first", layout.WorldFile(), slug)
+	}
+	if !force {
+		if _, err := os.Stat(layout.ArcFile()); err == nil {
+			return fmt.Errorf("arc.json already exists at %s — edit it, or pass --force to regenerate", layout.ArcFile())
+		}
+	}
+	canonPath, err := world.EnsureCanonFile(layout)
+	if err != nil {
+		return fmt.Errorf("ensure canon: %w", err)
+	}
+	genDir := filepath.Join(layout.Root, ".gen-arc")
+	if err := os.MkdirAll(genDir, 0o755); err != nil {
+		return err
+	}
+	cfg := pipeline.ArcConfig{
+		Premise:        premise,
+		TargetChapters: chapters,
+		WorldFile:      layout.WorldFile(),
+		CharactersFile: layout.CharactersFile(),
+		CanonFile:      canonPath,
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "world: %s\n", slug)
+	fmt.Fprintf(cmd.OutOrStdout(), "drafting arc (~%d chapters)...\n\n", chapters)
+
+	root, err := vamp.BuildRoot(func() (*vamp.Pipeline, error) {
+		return pipeline.BuildArc(cfg)
+	})
+	if err != nil {
+		return err
+	}
+	root.SetArgs([]string{"run", "--run-dir", genDir, "--no-cache"})
+	if err := root.Execute(); err != nil {
+		return fmt.Errorf("arc: %w", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(genDir, "arc.json"))
+	if err != nil {
+		return fmt.Errorf("read generated arc: %w", err)
+	}
+	if err := os.WriteFile(layout.ArcFile(), raw, 0o644); err != nil {
+		return fmt.Errorf("write arc.json: %w", err)
+	}
+	if a, ok, perr := world.LoadArc(layout); perr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: generated arc.json didn't parse cleanly — edit it before running novel: %v\n", perr)
+	} else if ok {
+		fmt.Fprintf(cmd.OutOrStdout(), "  %d chapters: %s\n", len(a.Chapters), fallbackStr(a.Title, "(untitled)"))
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "\n✓ draft arc written: %s\n", layout.ArcFile())
+	fmt.Fprintf(cmd.OutOrStdout(), "  review/edit it, then: worldsmith novel %s\n", slug)
+	return nil
 }
 
 func runStory(cmd *cobra.Command, slug string) error {
