@@ -24,6 +24,7 @@ var (
 	sceneShots     int
 	sceneNarrator  string
 	scenePublishTo string
+	sceneFormat    string
 )
 
 // worldgenCommand auto-authors worlds from a theme (content-mill breadth).
@@ -171,6 +172,7 @@ phase 1 (LLM) writes the shot list; phase 2 (ComfyUI + TTS) renders it.`,
 	cmd.Flags().IntVar(&sceneShots, "shots", 7, "Number of shots in the scene.")
 	cmd.Flags().StringVar(&sceneNarrator, "narrator", "am_fenrir", "Default Kokoro voice for the narrator.")
 	cmd.Flags().StringVar(&scenePublishTo, "publish-to", "", "Directory to copy the finished final.mp4 into.")
+	cmd.Flags().StringVar(&sceneFormat, "format", "", "TikTok format brief (default: rotates by scene number).")
 	return cmd
 }
 
@@ -196,16 +198,21 @@ func runScene(cmd *cobra.Command, slug string) error {
 		return err
 	}
 
+	format := sceneFormat
+	if format == "" {
+		format = pipeline.FormatForScene(n)
+	}
 	cfg := pipeline.SceneConfig{
 		WorldFile:      layout.WorldFile(),
 		CharactersFile: layout.CharactersFile(),
 		CanonFile:      canonPath,
 		Shots:          sceneShots,
 		NarratorVoice:  sceneNarrator,
+		Format:         format,
 		ShotsFile:      filepath.Join(sceneDir, "shots.json"),
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "world: %s\nscene: %03d\n", slug, n)
+	fmt.Fprintf(cmd.OutOrStdout(), "world: %s\nscene: %03d\nformat: %s\n", slug, n, format)
 
 	// Phase 1: LLM writes the shot list.
 	fmt.Fprintln(cmd.OutOrStdout(), "phase 1/2: writing scene shot list (LLM)...")

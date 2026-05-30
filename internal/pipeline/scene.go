@@ -18,11 +18,37 @@ type SceneConfig struct {
 	Shots          int
 	NarratorVoice  string
 	KokoroURL      string
+	// Format is the TikTok format brief for this scene. The CLI rotates it per
+	// scene (or honors --format) so depth doesn't emit the same shape twice.
+	Format string
 	// ShotsFile is the path to the phase-1 shots.json, read by phase 2.
 	ShotsFile string
 }
 
 const defaultKokoroURL = "http://127.0.0.1:8880"
+
+// SceneFormats is the rotation of short-form video formats `scene` cycles
+// through so successive videos are structurally different — a POV, a list, a
+// tour, a creature feature — rather than the same narrated scene every time.
+// Mechanical variety beats asking the model to "be different" (it ignores that).
+var SceneFormats = []string{
+	"POV: you wake up as one of this world's characters and the next 25 seconds go very wrong. First person, present tense, a little panicked, building to a hard cut.",
+	"Ranked: ways to die in this world, least to most embarrassing. Fast, darkly funny, a brand-new way each shot, escalating to the dumbest one.",
+	"An unhinged in-universe tour guide wildly overhypes this world to a tourist who is very obviously about to die. Upbeat, oblivious, escalating dread.",
+	"Creature feature: hype the most dangerous thing in this world like a nature-doc narrator slowly losing his mind — whispered awe to full panic.",
+	"A leaked in-world voice log / transmission that absolutely was not supposed to get out. Build dread fast, end on one chilling line.",
+	"A jaded local rates this world's factions, brutally honest and a little unhinged, worst to best.",
+	"Things in this world that would NOT fly on Earth. Listicle energy, escalating to the most unhinged one.",
+	"Day in the life of a working-class nobody in this world — mundane, relatable, and then it escalates fast.",
+}
+
+// FormatForScene returns the rotated format for a 1-indexed scene number.
+func FormatForScene(n int) string {
+	if n < 1 {
+		n = 1
+	}
+	return SceneFormats[(n-1)%len(SceneFormats)]
+}
 
 // BuildSceneScript is phase 1 (LLM only): invent a scene and break it into
 // shots. Writes shots.json (a {"items":[...]} array, each shot tagged with a
@@ -30,6 +56,9 @@ const defaultKokoroURL = "http://127.0.0.1:8880"
 func BuildSceneScript(cfg SceneConfig) (*vamp.Pipeline, error) {
 	if cfg.Shots <= 0 {
 		cfg.Shots = 7
+	}
+	if cfg.Format == "" {
+		cfg.Format = SceneFormats[0]
 	}
 	p := vamp.New("worldsmith-scene-script").
 		Describe("Invent a short-form video scene from a world and break it into shots.")
@@ -42,6 +71,8 @@ func BuildSceneScript(cfg SceneConfig) (*vamp.Pipeline, error) {
 		vamp.Describe("Path to canon.md (may be empty)."))
 	p.Input("shots", vamp.WithDefault(fmt.Sprintf("%d", cfg.Shots)),
 		vamp.Describe("Number of shots in the scene."))
+	p.Input("format", vamp.WithDefault(cfg.Format),
+		vamp.Describe("The TikTok format brief for this scene."))
 
 	p.RequireProfile("long_form")
 	p.RequireGPUMemory("~30GB during generation")
