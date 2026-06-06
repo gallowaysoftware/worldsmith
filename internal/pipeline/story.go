@@ -984,16 +984,3 @@ func BuildEpisodeFinalize(cfg StoryConfig) (*vamp.Pipeline, error) {
 
 	return p.Build()
 }
-
-// retryFor is the per-stage retry policy that takes longer than the
-// vamp default. Kept here in case a stage needs to override (e.g.
-// the write_story stage occasionally takes a few minutes per
-// attempt and merits a longer initial backoff between retries).
-func retryFor(maxAttempts int) *vamp.RetryPolicy {
-	return &vamp.RetryPolicy{
-		MaxAttempts:    maxAttempts,
-		InitialBackoff: 30 * time.Second,
-		MaxBackoff:     5 * time.Minute,
-		RetryOn:        []string{"transient", "invalid_output"},
-	}
-}

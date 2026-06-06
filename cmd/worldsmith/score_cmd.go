@@ -70,7 +70,7 @@ func runScore(cmd *cobra.Command, slug string) error {
 			sum += v
 		}
 		prevMean := sum / (len(overalls) - 1)
-		arrow := "→"
+		var arrow string
 		switch {
 		case latest > prevMean+3:
 			arrow = "↑ improving"

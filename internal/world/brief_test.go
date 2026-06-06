@@ -129,10 +129,10 @@ func TestStripInstallmentPrefix(t *testing.T) {
 		{"001 — The First Hour", "The First Hour"},
 		{"001 - The First Hour", "The First Hour"},
 		{"001. The First Hour", "The First Hour"},
-		{"42 – Foo Bar", "Foo Bar"},                                     // en-dash + hyphen variants
-		{"The First Hour", "The First Hour"},                            // no prefix → unchanged
-		{"001The First Hour", "001The First Hour"},                      // digits not followed by separator → unchanged
-		{"001 missing separator", "001 missing separator"},              // digits + space but no — / - / . → unchanged
+		{"42 – Foo Bar", "Foo Bar"},                        // en-dash + hyphen variants
+		{"The First Hour", "The First Hour"},               // no prefix → unchanged
+		{"001The First Hour", "001The First Hour"},         // digits not followed by separator → unchanged
+		{"001 missing separator", "001 missing separator"}, // digits + space but no — / - / . → unchanged
 	}
 	for _, c := range cases {
 		if got := stripInstallmentPrefix(c.in); got != c.want {

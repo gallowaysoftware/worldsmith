@@ -64,8 +64,8 @@ func TestArc_FlatChapters_And_BookForChapter(t *testing.T) {
 		t.Fatalf("FlatChapters wrong: %d %+v", len(flat), flat)
 	}
 	cases := []struct {
-		n        int
-		wantBook int
+		n          int
+		wantBook   int
 		wantReveal string
 	}{
 		{1, 1, "breeding"}, {3, 1, "breeding"}, {4, 2, "rip"}, {5, 2, "rip"},

@@ -286,7 +286,7 @@ func AppendCanonDelta(l Layout, n int) error {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.WriteString(fmt.Sprintf("\n## From installment %d\n\n", n)); err != nil {
+	if _, err := fmt.Fprintf(f, "\n## From installment %d\n\n", n); err != nil {
 		return err
 	}
 	_, err = f.Write(delta)

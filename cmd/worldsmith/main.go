@@ -2051,68 +2051,6 @@ func publishEpisode(cmd *cobra.Command, layout world.Layout, n int, publishTo st
 	return nil
 }
 
-// selectBestOutline generates n outline candidates (the same outline
-// stage the full pipeline uses, sampled at spread temperatures so the
-// plans genuinely differ), scores each structurally, and returns the
-// JSON of the highest-scoring one. The winner is fed to the story
-// pipeline via StoryConfig.OutlineJSON. Re3's generate-N-and-rerank,
-// applied at the plan level where it's cheapest and highest-leverage.
-func selectBestOutline(cmd *cobra.Command, cfg pipeline.StoryConfig, installmentDir string, n int) (string, error) {
-	candRoot := filepath.Join(installmentDir, "outline_candidates")
-	if err := os.MkdirAll(candRoot, 0o755); err != nil {
-		return "", err
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "outline rerank: %d candidates\n", n)
-
-	var bestJSON string
-	var bestScore world.OutlineScore
-	bestSet := false
-	for i := 0; i < n; i++ {
-		sub := filepath.Join(candRoot, fmt.Sprintf("%d", i))
-		if err := os.MkdirAll(sub, 0o755); err != nil {
-			return "", err
-		}
-		temp := 0.3 + 0.15*float64(i) // 0.30, 0.45, 0.60, ...
-		ocfg := pipeline.OutlineConfig{
-			WorldFile:             cfg.WorldFile,
-			CharactersFile:        cfg.CharactersFile,
-			CanonFile:             cfg.CanonFile,
-			CanonRelevantFile:     cfg.CanonRelevantFile,
-			PriorsFile:            cfg.PriorsFile,
-			BriefFile:             cfg.BriefFile,
-			HistoricalContextFile: cfg.HistoricalContextFile,
-			NotebookFile:          cfg.NotebookFile,
-			Temperature:           temp,
-		}
-		root, err := vamp.BuildRoot(func() (*vamp.Pipeline, error) {
-			return pipeline.BuildOutline(ocfg)
-		})
-		if err != nil {
-			return "", err
-		}
-		root.SetArgs([]string{"run", "--run-dir", sub, "--no-cache"})
-		if err := root.Execute(); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "  candidate %d failed: %v\n", i, err)
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(sub, "outline.json"))
-		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "  candidate %d: no outline.json\n", i)
-			continue
-		}
-		score := world.ScoreOutline(string(raw))
-		fmt.Fprintf(cmd.OutOrStdout(), "  candidate %d (temp %.2f): score %.1f\n", i, temp, score.Total)
-		if !bestSet || score.Total > bestScore.Total {
-			bestJSON, bestScore, bestSet = string(raw), score, true
-		}
-	}
-	if !bestSet {
-		return "", fmt.Errorf("all %d outline candidates failed", n)
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "  chosen: score %.1f\n", bestScore.Total)
-	return bestJSON, nil
-}
-
 // stubPipelineFactory returns a factory that builds the story
 // pipeline with empty-but-valid input paths. activate/doctor only
 // read RequireProfile + RequireService declarations, not the inputs,

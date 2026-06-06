@@ -76,7 +76,7 @@ type Event struct {
 	Year          int        `json:"year"`
 	YearPrecision string     `json:"year_precision,omitempty"` // year|decade|century|legendary
 	Era           string     `json:"era,omitempty"`
-	Kind          string     `json:"kind"` // war|founding|death|birth|oath|betrayal|discovery|disaster|wedding|coronation|exile|invention|prophecy|miracle|treaty|schism|other
+	Kind          string     `json:"kind"`  // war|founding|death|birth|oath|betrayal|discovery|disaster|wedding|coronation|exile|invention|prophecy|miracle|treaty|schism|other
 	Scope         string     `json:"scope"` // global|regional|local|personal
 	Region        string     `json:"region,omitempty"`
 	Actors        []string   `json:"actors,omitempty"`
@@ -84,8 +84,8 @@ type Event struct {
 	Consequences  []string   `json:"consequences,omitempty"` // forward links to event ids
 	CausedBy      []string   `json:"caused_by,omitempty"`    // backward links to event ids
 	Visibility    Visibility `json:"visibility"`
-	Source        string     `json:"source"`      // human|llm
-	Confidence    string     `json:"confidence"`  // canon|proposed
+	Source        string     `json:"source"`     // human|llm
+	Confidence    string     `json:"confidence"` // canon|proposed
 	Tags          []string   `json:"tags,omitempty"`
 }
 
@@ -339,14 +339,14 @@ type FilteredEvent struct {
 //
 //   - Tier=common      → always passes with true summary.
 //   - Tier=regional    → true summary when opts.POVRegion matches
-//                        event.Region; otherwise rumour-only path
-//                        (RumouredAs surfaced if present, else
-//                        dropped).
+//     event.Region; otherwise rumour-only path
+//     (RumouredAs surfaced if present, else
+//     dropped).
 //   - Tier=cloistered  → true summary when any of event.Visibility.KnownTo
-//                        is in opts.OnStageActors; otherwise rumour-only
-//                        path. Empty OnStageActors falls to rumour-only.
+//     is in opts.OnStageActors; otherwise rumour-only
+//     path. Empty OnStageActors falls to rumour-only.
 //   - Tier=secret      → dropped unless opts.IncludeSecret (showrunner
-//                        layer only), in which case true summary.
+//     layer only), in which case true summary.
 //   - Tier=lost        → always dropped.
 //
 // An unrecognised tier defaults to common (safer than dropping —
