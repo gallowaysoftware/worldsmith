@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -66,6 +67,11 @@ func runExpand(cmd *cobra.Command, slug, seed string, count int) error {
 	if err != nil {
 		return err
 	}
+	unlock, err := lockWorld(layout)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if _, err := os.Stat(layout.WorldFile()); err != nil {
 		return fmt.Errorf("world.md not found at %s — run `worldsmith init %s` first", layout.WorldFile(), slug)
 	}
@@ -119,7 +125,7 @@ func runExpand(cmd *cobra.Command, slug, seed string, count int) error {
 			return err
 		}
 		root.SetArgs([]string{"run", "--run-dir", genDir, "--no-cache"})
-		if err := root.Execute(); err != nil {
+		if err := root.ExecuteContext(cmd.Context()); err != nil {
 			return fmt.Errorf("expand thread %d: %w", i+1, err)
 		}
 
@@ -195,6 +201,11 @@ func runExpandReview(cmd *cobra.Command, slug string, acceptAll bool, acceptCSV,
 	if err != nil {
 		return err
 	}
+	unlock, err := lockWorld(layout)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	staged, err := world.ListStaged(layout)
 	if err != nil {
 		return err
@@ -249,7 +260,7 @@ func runExpandReview(cmd *cobra.Command, slug string, acceptAll bool, acceptCSV,
 	res, err := contentkit.ReviewLoop(os.Stdin, out, items, contentkit.ReviewActions{
 		Accept:  func(it contentkit.ReviewItem) error { return world.AcceptStaged(layout, itemByID[it.ID], backupStamp) },
 		Discard: func(it contentkit.ReviewItem) error { return world.DiscardStaged(itemByID[it.ID]) },
-		Edit:    func(it contentkit.ReviewItem) error { return editFileInEditor(itemByID[it.ID].Path) },
+		Edit:    func(it contentkit.ReviewItem) error { return editFileInEditor(cmd.Context(), itemByID[it.ID].Path) },
 	})
 	if err != nil {
 		return err
@@ -258,12 +269,12 @@ func runExpandReview(cmd *cobra.Command, slug string, acceptAll bool, acceptCSV,
 	return nil
 }
 
-func editFileInEditor(path string) error {
+func editFileInEditor(ctx context.Context, path string) error {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vi"
 	}
-	c := exec.Command(editor, path)
+	c := exec.CommandContext(ctx, editor, path)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return c.Run()
 }

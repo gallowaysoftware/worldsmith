@@ -53,6 +53,11 @@ ensure-services preflight brings it up when this command runs).
 			if err != nil {
 				return err
 			}
+			unlock, err := lockWorld(layout)
+			if err != nil {
+				return err
+			}
+			defer unlock()
 			if _, err := os.Stat(layout.WorldFile()); err != nil {
 				return fmt.Errorf("world.md not found at %s — run `worldsmith init %s` first",
 					layout.WorldFile(), slug)
@@ -92,7 +97,7 @@ ensure-services preflight brings it up when this command runs).
 				return err
 			}
 			root.SetArgs([]string{"run", "--run-dir", runDir})
-			if err := root.Execute(); err != nil {
+			if err := root.ExecuteContext(cmd.Context()); err != nil {
 				return fmt.Errorf("timeline-gen: %w", err)
 			}
 

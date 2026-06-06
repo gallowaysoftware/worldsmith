@@ -72,7 +72,7 @@ func runAsk(cmd *cobra.Command, slug, question string) error {
 		return err
 	}
 	root.SetArgs([]string{"run", "--run-dir", genDir, "--no-cache"})
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(cmd.Context()); err != nil {
 		return fmt.Errorf("ask: %w", err)
 	}
 	answer, err := os.ReadFile(filepath.Join(genDir, "answer.md"))

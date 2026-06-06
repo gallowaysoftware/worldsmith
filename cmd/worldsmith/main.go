@@ -16,16 +16,19 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -79,7 +82,14 @@ profiles (worldsmith activate brings them all up).`,
 	root.AddCommand(timelineCommand())
 	root.AddCommand(benchCommand())
 
-	if err := root.Execute(); err != nil {
+	// Translate Ctrl-C / SIGTERM into a cancelled context that flows through
+	// cmd.Context() to every child we launch (vamp runs, ffmpeg/ffprobe, the
+	// $EDITOR) via exec.CommandContext — so a signal kills the whole tree
+	// instead of orphaning children and leaving half-written artifacts.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "worldsmith:", err)
 		os.Exit(1)
 	}
@@ -104,6 +114,11 @@ files.`,
 			if err != nil {
 				return err
 			}
+			unlock, err := lockWorld(layout)
+			if err != nil {
+				return err
+			}
+			defer unlock()
 			if err := world.ScaffoldWorld(layout, slug); err != nil {
 				return err
 			}
@@ -221,6 +236,12 @@ func runNovel(cmd *cobra.Command, slug string, targetChapters int, narrator, pub
 	if err != nil {
 		return err
 	}
+	unlock, err := lockWorld(layout)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	if _, err := os.Stat(layout.WorldFile()); err != nil {
 		return fmt.Errorf("world.md not found at %s — run `worldsmith init %s` first", layout.WorldFile(), slug)
 	}
@@ -340,7 +361,7 @@ func assembleBook(cmd *cobra.Command, layout world.Layout, count int) (string, e
 		return "", err
 	}
 	bookPath := filepath.Join(layout.Root, "book.m4b")
-	c := exec.Command(ff, "-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", bookPath)
+	c := exec.CommandContext(cmd.Context(), ff, "-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", bookPath)
 	c.Stdout = cmd.ErrOrStderr()
 	c.Stderr = cmd.ErrOrStderr()
 	if err := c.Run(); err != nil {
@@ -401,6 +422,12 @@ func runBrief(cmd *cobra.Command, slug string, installment int, steer string, ta
 	if err != nil {
 		return err
 	}
+	unlock, err := lockWorld(layout)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	if _, err := os.Stat(layout.WorldFile()); err != nil {
 		return fmt.Errorf("world.md not found at %s — run `worldsmith init %s` first", layout.WorldFile(), slug)
 	}
@@ -472,7 +499,7 @@ func runBrief(cmd *cobra.Command, slug string, installment int, steer string, ta
 		return err
 	}
 	root.SetArgs([]string{"run", "--run-dir", genDir, "--no-cache"})
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(cmd.Context()); err != nil {
 		return fmt.Errorf("brief %d: %w", n, err)
 	}
 
@@ -529,6 +556,12 @@ func runArc(cmd *cobra.Command, slug, premise string, chapters int, force bool) 
 	if err != nil {
 		return err
 	}
+	unlock, err := lockWorld(layout)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	if _, err := os.Stat(layout.WorldFile()); err != nil {
 		return fmt.Errorf("world.md not found at %s — run `worldsmith init %s` first", layout.WorldFile(), slug)
 	}
@@ -562,7 +595,7 @@ func runArc(cmd *cobra.Command, slug, premise string, chapters int, force bool) 
 		return err
 	}
 	root.SetArgs([]string{"run", "--run-dir", genDir, "--no-cache"})
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(cmd.Context()); err != nil {
 		return fmt.Errorf("arc: %w", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(genDir, "arc.json"))
@@ -638,6 +671,12 @@ func runSeriesPlan(cmd *cobra.Command, slug string, force bool) error {
 	if err != nil {
 		return err
 	}
+	unlock, err := lockWorld(layout)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	if _, err := os.Stat(layout.WorldFile()); err != nil {
 		return fmt.Errorf("world.md not found at %s — run `worldsmith init %s` first", layout.WorldFile(), slug)
 	}
@@ -699,7 +738,7 @@ func runSeriesPlan(cmd *cobra.Command, slug string, force bool) error {
 			CanonFile:         canonPath,
 			NotebookFile:      notebookPath,
 		}
-		if err := runPipeline(genDir, func() (*vamp.Pipeline, error) {
+		if err := runPipeline(cmd, genDir, func() (*vamp.Pipeline, error) {
 			return pipeline.BuildBookOutline(cfg)
 		}); err != nil {
 			return fmt.Errorf("book %d outline: %w", b.N, err)
@@ -796,6 +835,12 @@ func runSeriesWrite(cmd *cobra.Command, slug string, bookFilter, chapterLimit in
 	if err != nil {
 		return err
 	}
+	unlock, err := lockWorld(layout)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	if _, err := os.Stat(layout.WorldFile()); err != nil {
 		return fmt.Errorf("world.md not found — run `worldsmith init %s` first", slug)
 	}
@@ -946,7 +991,7 @@ func assembleBookChaptered(cmd *cobra.Command, layout world.Layout, chapterNums 
 			return fmt.Errorf("chapter %d m4b missing: %w", n, err)
 		}
 		fmt.Fprintf(&concat, "file '%s'\n", strings.ReplaceAll(ep, "'", `'\''`))
-		durSec, err := probeDurationSec(ep)
+		durSec, err := probeDurationSec(cmd.Context(), ep)
 		if err != nil {
 			return fmt.Errorf("probe chapter %d: %w", n, err)
 		}
@@ -981,7 +1026,7 @@ func assembleBookChaptered(cmd *cobra.Command, layout world.Layout, chapterNums 
 		"-c", "copy",
 		outPath,
 	}
-	c := exec.Command("ffmpeg", args...)
+	c := exec.CommandContext(cmd.Context(), "ffmpeg", args...)
 	if outb, err := c.CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg assemble: %w\n%s", err, lastLines(string(outb), 12))
 	}
@@ -989,8 +1034,8 @@ func assembleBookChaptered(cmd *cobra.Command, layout world.Layout, chapterNums 
 }
 
 // probeDurationSec returns a media file's duration in seconds via ffprobe.
-func probeDurationSec(path string) (float64, error) {
-	c := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration",
+func probeDurationSec(ctx context.Context, path string) (float64, error) {
+	c := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "format=duration",
 		"-of", "default=noprint_wrappers=1:nokey=1", path)
 	outb, err := c.Output()
 	if err != nil {
@@ -1019,6 +1064,12 @@ func runStory(cmd *cobra.Command, slug string) error {
 	if err != nil {
 		return err
 	}
+
+	unlock, err := lockWorld(layout)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	// Sanity check: world.md must exist + be non-stub-ish (the stub
 	// has a comment line we can detect). We don't enforce this hard,
@@ -1146,7 +1197,7 @@ func stylePolish(cmd *cobra.Command, layout world.Layout, n int, installmentDir,
 		if err := os.WriteFile(spansPath, payload, 0o644); err != nil {
 			return cur
 		}
-		if err := runPipeline(installmentDir, func() (*vamp.Pipeline, error) {
+		if err := runPipeline(cmd, installmentDir, func() (*vamp.Pipeline, error) {
 			return pipeline.BuildProsePolish(pipeline.ProsePolishConfig{
 				SpansFile:           spansPath,
 				NotebookFile:        notebookFile,
@@ -1211,7 +1262,7 @@ func convergeProse(cmd *cobra.Command, layout world.Layout, n int, cfg pipeline.
 	// by the loop's checks; the per-scene write_scene pass carries the line-level polish.
 	cfg.PreEdited = true
 	cfg.SkipNarration = true
-	if err := runPipeline(installmentDir, func() (*vamp.Pipeline, error) {
+	if err := runPipeline(cmd, installmentDir, func() (*vamp.Pipeline, error) {
 		return pipeline.BuildStory(cfg)
 	}); err != nil {
 		return "", 0, "", fmt.Errorf("installment %d (prose): %w", n, err)
@@ -1255,7 +1306,7 @@ func convergeProse(cmd *cobra.Command, layout world.Layout, n int, cfg pipeline.
 			BriefFile:            cfg.BriefFile,
 			OutputName:           "spanfix.json",
 		}
-		if err := runPipeline(installmentDir, func() (*vamp.Pipeline, error) {
+		if err := runPipeline(cmd, installmentDir, func() (*vamp.Pipeline, error) {
 			return pipeline.BuildSpanFix(scfg)
 		}); err != nil {
 			return "", 0, "", fmt.Errorf("installment %d span-fix pass %d: %w", n, iter, err)
@@ -1277,7 +1328,7 @@ func convergeProse(cmd *cobra.Command, layout world.Layout, n int, cfg pipeline.
 		vcfg.DraftFile = layout.InstallmentFile(n, polishedName)
 		vcfg.PreEdited = true
 		vcfg.SkipNarration = true
-		if err := runPipeline(installmentDir, func() (*vamp.Pipeline, error) {
+		if err := runPipeline(cmd, installmentDir, func() (*vamp.Pipeline, error) {
 			return pipeline.BuildStory(vcfg)
 		}); err != nil {
 			return "", 0, "", fmt.Errorf("installment %d re-verify pass %d: %w", n, iter, err)
@@ -1369,7 +1420,7 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 	// Grounding pass: extract the exact canon + mechanics this chapter's events touch
 	// into chapter_facts.md, pinned into the writer so it doesn't improvise dense canon
 	// (the continuity failure mode on high-canon-density chapters like the contact event).
-	if err := runPipeline(installmentDir, func() (*vamp.Pipeline, error) {
+	if err := runPipeline(cmd, installmentDir, func() (*vamp.Pipeline, error) {
 		return pipeline.BuildChapterFacts(pipeline.ChapterFactsConfig{
 			BriefFile:             layout.BriefFile(n),
 			WorldFile:             layout.WorldFile(),
@@ -1469,7 +1520,7 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 	// showrunner) BEFORE cast_voice/TTS runs — so a healthy run shows VRAM fall
 	// mid-pipeline rather than holding LLM+TTS together (the old freeze).
 	logVRAM(cmd, fmt.Sprintf("ch%d before narration (LLM resident)", n))
-	if err := runPipeline(installmentDir, func() (*vamp.Pipeline, error) {
+	if err := runPipeline(cmd, installmentDir, func() (*vamp.Pipeline, error) {
 		return pipeline.BuildStory(cfg)
 	}); err != nil {
 		return fmt.Errorf("installment %d (narration): %w", n, err)
@@ -1494,7 +1545,7 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 		return err
 	}
 	root2.SetArgs([]string{"run", "--run-dir", installmentDir})
-	if err := root2.Execute(); err != nil {
+	if err := root2.ExecuteContext(cmd.Context()); err != nil {
 		return fmt.Errorf("installment %d finalize (cover + mix): %w", n, err)
 	}
 
@@ -1538,7 +1589,7 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 // freeActiveLLM, never climbing toward the card's ceiling. Best-effort — silent
 // when nvidia-smi isn't on PATH (e.g. CI), so it never affects a run's outcome.
 func logVRAM(cmd *cobra.Command, label string) {
-	used, err := gpuUsedMiB()
+	used, err := gpuUsedMiB(cmd.Context())
 	if err != nil {
 		return
 	}
@@ -1551,7 +1602,7 @@ func logVRAM(cmd *cobra.Command, label string) {
 // stay up; the next pipeline that needs the LLM re-activates it via its capability.
 func freeActiveLLM(cmd *cobra.Command) {
 	fmt.Fprintln(cmd.OutOrStdout(), "freeing the LLM profile for the cover phase (vibe stop)...")
-	c := exec.Command("vibe", "stop")
+	c := exec.CommandContext(cmd.Context(), "vibe", "stop")
 	c.Stdout = cmd.OutOrStdout()
 	c.Stderr = cmd.ErrOrStderr()
 	if err := c.Run(); err != nil {
@@ -1564,13 +1615,16 @@ func freeActiveLLM(cmd *cobra.Command) {
 // runPipeline builds and executes a vamp pipeline in runDir. Shared by the per-scene
 // authoring steps (the outline + each scene), which each run in their own run-dir so
 // the vamp cache doesn't collide on shared stage names across scenes.
-func runPipeline(runDir string, build func() (*vamp.Pipeline, error)) error {
+func runPipeline(cmd *cobra.Command, runDir string, build func() (*vamp.Pipeline, error)) error {
 	root, err := vamp.BuildRoot(build)
 	if err != nil {
 		return err
 	}
 	root.SetArgs([]string{"run", "--run-dir", runDir})
-	return root.Execute()
+	// ExecuteContext so a Ctrl-C / SIGTERM during a sub-pipeline run cancels
+	// the vamp executor (and the model/ffmpeg work it drives) instead of
+	// orphaning it.
+	return root.ExecuteContext(cmd.Context())
 }
 
 // leakRe / breakingRe are the legacy-markdown fallback: they pull the count off an old
@@ -1864,7 +1918,7 @@ func verifyContinuity(cmd *cobra.Command, layout world.Layout, n int, installmen
 		return nil // unparseable or empty — leave as-is
 	}
 
-	if err := runPipeline(installmentDir, func() (*vamp.Pipeline, error) {
+	if err := runPipeline(cmd, installmentDir, func() (*vamp.Pipeline, error) {
 		return pipeline.BuildContinuityVerify(pipeline.ContinuityVerifyConfig{
 			ContinuityReportFile: contRptPath,
 			WorldFile:            worldFile,
@@ -1952,7 +2006,7 @@ func generatePerSceneDraft(cmd *cobra.Command, layout world.Layout, n int, cfg p
 
 	// 1. Outline.
 	outDir := filepath.Join(installmentDir, "outline")
-	if err = runPipeline(outDir, func() (*vamp.Pipeline, error) {
+	if err = runPipeline(cmd, outDir, func() (*vamp.Pipeline, error) {
 		return pipeline.BuildOutline(pipeline.OutlineConfig{
 			WorldFile:             cfg.WorldFile,
 			CharactersFile:        cfg.CharactersFile,
@@ -2034,7 +2088,7 @@ func generatePerSceneDraft(cmd *cobra.Command, layout world.Layout, n int, cfg p
 		if cfg.Seed != 0 {
 			scfg.Seed = cfg.Seed*1000 + idx
 		}
-		if err = runPipeline(sceneDir, func() (*vamp.Pipeline, error) {
+		if err = runPipeline(cmd, sceneDir, func() (*vamp.Pipeline, error) {
 			return pipeline.BuildSceneProse(scfg)
 		}); err != nil {
 			return "", "", fmt.Errorf("scene %d: %w", idx, err)
@@ -2119,7 +2173,7 @@ pipeline activate; delegates through vamp.`,
 				return err
 			}
 			root.SetArgs([]string{"activate"})
-			return root.Execute()
+			return root.ExecuteContext(cmd.Context())
 		},
 	}
 }
@@ -2137,7 +2191,7 @@ so it works as a CI gate. Doesn't start anything itself.`,
 				return err
 			}
 			root.SetArgs([]string{"doctor"})
-			return root.Execute()
+			return root.ExecuteContext(cmd.Context())
 		},
 	}
 }
@@ -2167,6 +2221,20 @@ func listCommand() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// lockWorld takes the per-world exclusive lock for a mutating command and
+// returns a release func to defer. Two concurrent mutating runs on the same
+// world (story, expand, timeline edits, …) would corrupt shared state
+// (canon.md, timeline.json, the run dirs), so every mutating RunE grabs this
+// first; read-only commands (list, score, ask, codex, timeline list/show)
+// don't. On contention it returns a clear "locked by another process" error.
+func lockWorld(l world.Layout) (func(), error) {
+	lk, err := world.Acquire(l)
+	if err != nil {
+		return nil, err
+	}
+	return func() { _ = lk.Unlock() }, nil
 }
 
 // isSlug enforces the same shape vibe profiles use: lowercase

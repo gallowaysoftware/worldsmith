@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -54,8 +55,8 @@ func runAutopilot(cmd *cobra.Command, slugs []string, maxStaged, threads, idleMi
 	// tool — proceed. Otherwise the GPU is "busy" only if something else is using
 	// it past the threshold (so we don't fight the user for it). A loaded LLM no
 	// longer falsely reads as contention.
-	if !llmReachable() {
-		if used, err := gpuUsedMiB(); err == nil && used > idleMiB {
+	if !llmReachable(cmd.Context()) {
+		if used, err := gpuUsedMiB(cmd.Context()); err == nil && used > idleMiB {
 			fmt.Fprintf(out, "GPU busy (%d MiB in use > %d, LLM not loaded) — skipping this pass\n", used, idleMiB)
 			return nil
 		}
@@ -93,13 +94,13 @@ func runAutopilot(cmd *cobra.Command, slugs []string, maxStaged, threads, idleMi
 // llmReachable reports whether the long_form LLM endpoint is up (any HTTP
 // response, including 401, counts — the server is answering). curl exits 0 when
 // it connected; non-zero (e.g. connection refused) means down.
-func llmReachable() bool {
-	return exec.Command("curl", "-sS", "-m", "2", "-o", "/dev/null", "http://127.0.0.1:9001/v1/models").Run() == nil
+func llmReachable(ctx context.Context) bool {
+	return exec.CommandContext(ctx, "curl", "-sS", "-m", "2", "-o", "/dev/null", "http://127.0.0.1:9001/v1/models").Run() == nil
 }
 
 // gpuUsedMiB reads total VRAM in use via nvidia-smi.
-func gpuUsedMiB() (int, error) {
-	o, err := exec.Command("nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits").Output()
+func gpuUsedMiB(ctx context.Context) (int, error) {
+	o, err := exec.CommandContext(ctx, "nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits").Output()
 	if err != nil {
 		return 0, err
 	}

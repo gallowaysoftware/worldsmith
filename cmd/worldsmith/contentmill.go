@@ -92,7 +92,7 @@ func generateOneWorld(cmd *cobra.Command, theme string) (string, error) {
 			return "", err
 		}
 		root.SetArgs([]string{"run", "--run-dir", genDir, "--no-cache"})
-		if err := root.Execute(); err != nil {
+		if err := root.ExecuteContext(cmd.Context()); err != nil {
 			lastErr = err
 			continue
 		}
@@ -126,6 +126,11 @@ func generateOneWorld(cmd *cobra.Command, theme string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	unlock, err := lockWorld(layout)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	if err := world.WriteWorldFromSeed(layout, seed, raw); err != nil {
 		return "", err
 	}
@@ -184,6 +189,11 @@ func runScene(cmd *cobra.Command, slug string) error {
 	if err != nil {
 		return err
 	}
+	unlock, err := lockWorld(layout)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if _, err := os.Stat(layout.WorldFile()); err != nil {
 		return fmt.Errorf("world.md not found at %s — run `worldsmith worldgen` or `worldsmith init %s` first", layout.WorldFile(), slug)
 	}
@@ -226,7 +236,7 @@ func runScene(cmd *cobra.Command, slug string) error {
 		return err
 	}
 	scriptRoot.SetArgs([]string{"run", "--run-dir", sceneDir, "--no-cache"})
-	if err := scriptRoot.Execute(); err != nil {
+	if err := scriptRoot.ExecuteContext(cmd.Context()); err != nil {
 		return fmt.Errorf("scene %d phase 1: %w", n, err)
 	}
 
@@ -252,7 +262,7 @@ func runScene(cmd *cobra.Command, slug string) error {
 		return err
 	}
 	renderRoot.SetArgs([]string{"run", "--run-dir", sceneDir, "--no-cache"})
-	if err := renderRoot.Execute(); err != nil {
+	if err := renderRoot.ExecuteContext(cmd.Context()); err != nil {
 		return fmt.Errorf("scene %d phase 2: %w", n, err)
 	}
 
@@ -307,7 +317,7 @@ func normalizeShotVoices(path string) error {
 // freeActiveProfile shells `vibe stop` to unload the active LLM profile so the
 // image/video models have the GPU to themselves. Non-fatal.
 func freeActiveProfile(cmd *cobra.Command) {
-	c := exec.Command("vibe", "stop")
+	c := exec.CommandContext(cmd.Context(), "vibe", "stop")
 	out, err := c.CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "  note: `vibe stop` to free LLM VRAM failed (%v); continuing\n", err)

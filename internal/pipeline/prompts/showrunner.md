@@ -9,8 +9,8 @@ is rejoined to your routing automatically by index.
 {{ readFile .inputs.characters_file }}
 ```
 
-Each character has a `voice_id` (its Kokoro voice). Descriptive prose, narration, and
-interiority use the narrator voice `am_fenrir`.
+Each character has a `name`. Descriptive prose, narration, and interiority use the
+narrator voice.
 
 # The installment's paragraphs (numbered, in order)
 
@@ -23,12 +23,12 @@ Each item is `{"idx": N, "text": "..."}`.
 For EACH numbered paragraph, decide who voices it:
 
 1. If the paragraph is **mostly one named character's quoted dialogue** (even with a
-   small action beat tucked in), route it to that character: `host` = their slug,
-   `voice_id` = their `voice_id` from the cast above. Look for the dominant speaker —
-   who actually says most of the words.
+   small action beat tucked in), route it to that character: `host` = their exact
+   `name` from the cast above, copied verbatim. Look for the dominant speaker — who
+   actually says most of the words.
 2. **Otherwise** — narration, description, scene-setting, interiority, or a mix — route
-   it to the narrator: `host` = `"narrator"`, `voice_id` = `"am_fenrir"`. Narrator is
-   the default; use it whenever there is not a single clearly-dominant speaker.
+   it to the narrator: `host` = `"narrator"`. Narrator is the default; use it whenever
+   there is not a single clearly-dominant speaker.
 
 # Output
 
@@ -36,8 +36,8 @@ Return ONLY a single JSON object — no prose, no fences. First byte `{`:
 
 ```
 {"segments": [
-  {"idx": 0, "host": "narrator", "voice_id": "am_fenrir"},
-  {"idx": 1, "host": "<character slug>", "voice_id": "<their voice_id from the cast>"}
+  {"idx": 0, "host": "narrator"},
+  {"idx": 1, "host": "<character name copied verbatim from the cast>"}
 ]}
 ```
 
@@ -46,6 +46,7 @@ Rules:
   paragraph's `idx`. Do NOT skip paragraphs, merge them, reorder them, or add any. The
   Nth entry routes the Nth paragraph.
 - **No `text` field** — routing only. The prose is rejoined to your routing by index.
-- `voice_id` must be a real Kokoro voice present in the cast JSON, or `am_fenrir`. If you
-  cannot identify a speaker, route to narrator + `am_fenrir` — better narrated than
-  broken.
+- `host` is either `"narrator"` or a character's `name` copied EXACTLY from the cast
+  JSON above. The pipeline maps the name to that character's voice itself, so you do
+  not pick a `voice_id` — just name the speaker. If you cannot identify a single
+  dominant speaker, route to `"narrator"` — better narrated than miscast.

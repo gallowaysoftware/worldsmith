@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -183,6 +184,11 @@ sets the publicly-told distortion that non-knowers see.`,
 			if err != nil {
 				return err
 			}
+			unlock, err := lockWorld(l)
+			if err != nil {
+				return err
+			}
+			defer unlock()
 			t, err := world.LoadTimeline(l)
 			if err != nil {
 				return err
@@ -294,6 +300,11 @@ func timelineReviewCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			unlock, err := lockWorld(l)
+			if err != nil {
+				return err
+			}
+			defer unlock()
 			t, err := world.LoadTimeline(l)
 			if err != nil {
 				return err
@@ -331,7 +342,7 @@ func timelineReviewCommand() *cobra.Command {
 					out2 = append(out2, e)
 					accepted++
 				case "e":
-					edited, err := editEventInteractive(e)
+					edited, err := editEventInteractive(cmd.Context(), e)
 					if err != nil {
 						fmt.Fprintf(out, "  edit failed: %v — keeping as proposed\n", err)
 						out2 = append(out2, e)
@@ -419,7 +430,7 @@ func formatEvent(e world.Event) string {
 // (or $VISUAL, or `vi`) on a temp file, and re-parses the result.
 // Used by `worldsmith timeline review` when the user wants to tweak
 // a proposed event before promoting it to canon.
-func editEventInteractive(e world.Event) (world.Event, error) {
+func editEventInteractive(ctx context.Context, e world.Event) (world.Event, error) {
 	raw, err := json.MarshalIndent(e, "", "  ")
 	if err != nil {
 		return e, err
@@ -446,8 +457,8 @@ func editEventInteractive(e world.Event) (world.Event, error) {
 	}
 	// Re-use the parent stdin/stdout/stderr so the editor draws on
 	// the same terminal.
-	cmd := newEditorCmd(editor, tmpPath)
-	if err := cmd.Run(); err != nil {
+	ed := newEditorCmd(ctx, editor, tmpPath)
+	if err := ed.Run(); err != nil {
 		return e, fmt.Errorf("%s exited non-zero: %w", editor, err)
 	}
 	updated, err := os.ReadFile(tmpPath)

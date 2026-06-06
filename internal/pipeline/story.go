@@ -150,6 +150,53 @@ type StoryConfig struct {
 // Inputs threaded through prompts: world_file, characters_file,
 // canon_file, priors_file, brief_file (all paths the prompts'
 // readFile calls resolve against).
+
+// enumerateSegmentsTmpl rejoins the showrunner's per-paragraph routing to the
+// authoritative numbered prose, splits long paragraphs at sentence boundaries,
+// and resolves each routed host to that character's Kokoro voice.
+//
+// Voice matching is by slug, derived MECHANICALLY with `slugify` on BOTH sides:
+// characters.json has no `slug` field, so the match keys on slugify(name).
+// The showrunner emits the character's NAME as `host` (the only thing a model
+// echoes reliably); slugifying both the host and each cast name means a stable,
+// deterministic match regardless of the model's spacing/casing — which is why
+// per-character voices reach their segments instead of silently falling back to
+// the narrator (the bug: the old template compared a nonexistent `slug` field).
+// The voice itself comes from the cast file, never the showrunner's echoed
+// voice_id, which can be typo'd (e.g. "am_fenfir") and 400 the TTS call. An
+// unknown host falls through to the narrator voice.
+const enumerateSegmentsTmpl = `{"items": [
+{{- $paras := index (parseJSON .stages.number_paragraphs.output) "items" -}}
+{{- $routes := index (parseJSON .stages.showrunner.output) "segments" -}}
+{{- $chars := index (parseJSON (readFile .inputs.characters_file)) "characters" -}}
+{{- $narrator := .inputs.narrator_voice -}}
+{{- $i := 0 -}}
+{{- $first := true -}}
+{{- range $pi, $para := $paras -}}
+{{- $text := trim (index $para "text") -}}
+{{- if and (ne $text "") (ne $text "***") (ne $text "---") (ne $text "* * *") -}}
+  {{- $host := "narrator" -}}
+  {{- if lt $pi (len $routes) -}}
+    {{- $host = index (index $routes $pi) "host" -}}
+  {{- end -}}
+  {{- $hostSlug := slugify $host -}}
+  {{- $voice := $narrator -}}
+  {{- if ne $hostSlug "narrator" -}}
+    {{- range $c := $chars -}}
+      {{- if eq (slugify (index $c "name")) $hostSlug -}}{{- $voice = index $c "voice_id" -}}{{- end -}}
+    {{- end -}}
+  {{- end -}}
+  {{- $chunks := parseJSON (splitSentences $text 300) -}}
+  {{- range $chunks -}}
+    {{- if not $first }},
+{{ end -}}{{- $first = false -}}
+    {"id": "seg_{{ printf "%03d" $i }}", "host": {{ toJSON $host }}, "voice_id": {{ toJSON $voice }}, "text": {{ toJSON . }}}
+    {{- $i = addInt $i 1 -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
+] }`
+
 func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 	if cfg.NarratorVoice == "" {
 		cfg.NarratorVoice = "am_fenrir"
@@ -575,40 +622,7 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 	// Paragraphs with no routing entry fall back to the narrator.
 	segments := p.Render("enumerate_segments").
 		After(numberParas, showrunner).
-		Prompt(`{"items": [
-{{- $paras := index (parseJSON .stages.number_paragraphs.output) "items" -}}
-{{- $routes := index (parseJSON .stages.showrunner.output) "segments" -}}
-{{- $chars := index (parseJSON (readFile .inputs.characters_file)) "characters" -}}
-{{- $narrator := .inputs.narrator_voice -}}
-{{- $i := 0 -}}
-{{- $first := true -}}
-{{- range $pi, $para := $paras -}}
-{{- $text := trim (index $para "text") -}}
-{{- if and (ne $text "") (ne $text "***") (ne $text "---") (ne $text "* * *") -}}
-  {{- $host := "narrator" -}}
-  {{- if lt $pi (len $routes) -}}
-    {{- $host = index (index $routes $pi) "host" -}}
-  {{- end -}}
-  {{/* Derive the voice from the host slug + the authoritative cast file —
-       never the showrunner's echoed voice_id, which can be typo'd
-       (e.g. "am_fenfir") and 400 the TTS call. narrator and any unknown
-       host both fall back to the narrator voice. */}}
-  {{- $voice := $narrator -}}
-  {{- if ne $host "narrator" -}}
-    {{- range $c := $chars -}}
-      {{- if eq (index $c "slug") $host -}}{{- $voice = index $c "voice_id" -}}{{- end -}}
-    {{- end -}}
-  {{- end -}}
-  {{- $chunks := parseJSON (splitSentences $text 300) -}}
-  {{- range $chunks -}}
-    {{- if not $first }},
-{{ end -}}{{- $first = false -}}
-    {"id": "seg_{{ printf "%03d" $i }}", "host": {{ toJSON $host }}, "voice_id": {{ toJSON $voice }}, "text": {{ toJSON . }}}
-    {{- $i = addInt $i 1 -}}
-  {{- end -}}
-{{- end -}}
-{{- end -}}
-] }`).
+		Prompt(enumerateSegmentsTmpl).
 		Output("segments.json").
 		OutputFormatJSON()
 

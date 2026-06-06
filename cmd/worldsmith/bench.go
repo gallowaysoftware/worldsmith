@@ -148,7 +148,7 @@ Candidates are vibe profile names; pass at least two
 				}
 				start := time.Now()
 				root.SetArgs([]string{"run", "--run-dir", outDir, "--no-cache"})
-				runErr := root.Execute()
+				runErr := root.ExecuteContext(cmd.Context())
 				dur := time.Since(start)
 
 				story := filepath.Join(outDir, "story.md")

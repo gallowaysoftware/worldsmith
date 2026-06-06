@@ -38,10 +38,36 @@ func DefaultRoot() string {
 	return filepath.Join(home, ".local", "state", "worldsmith")
 }
 
+// ValidSlug reports whether s is a safe world slug: lowercase ASCII
+// letters / digits / hyphens, non-empty. This matches the shape the
+// CLI enforces on init; because the slug becomes a path segment under
+// DefaultRoot, anything outside this set (a separator, "..", a drive
+// letter) could escape the state dir, so Open rejects it.
+func ValidSlug(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // Open returns a Layout for the given world slug, creating the
 // directory structure on first call. Idempotent on re-runs — the
 // MkdirAll calls don't clobber existing content.
 func Open(slug string) (Layout, error) {
+	// The slug is a path segment under DefaultRoot; reject anything
+	// that could traverse out of the state dir before touching disk.
+	if !ValidSlug(slug) {
+		return Layout{}, fmt.Errorf("invalid world slug %q: must be lowercase letters, digits, and hyphens", slug)
+	}
 	root := filepath.Join(DefaultRoot(), slug)
 	for _, sub := range []string{"briefs", "installments", "scenes"} {
 		if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {

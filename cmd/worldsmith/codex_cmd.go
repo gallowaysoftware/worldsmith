@@ -68,7 +68,7 @@ func runCodex(cmd *cobra.Command, slug, publishTo string) error {
 		return err
 	}
 	root.SetArgs([]string{"run", "--run-dir", genDir, "--no-cache"})
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(cmd.Context()); err != nil {
 		return fmt.Errorf("codex: %w", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(genDir, "codex.md"))
