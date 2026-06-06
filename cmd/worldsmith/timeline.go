@@ -279,11 +279,12 @@ sets the publicly-told distortion that non-knowers see.`,
 // promotes the keepers to canon.
 //
 // UI: per-event, prints the event + prompts `a/e/r/s/q` —
-//   a = accept (confidence → canon)
-//   e = edit (drops the event JSON into $EDITOR, accept the result)
-//   r = reject (delete the event from the timeline)
-//   s = skip (leave proposed, decide later)
-//   q = quit
+//
+//	a = accept (confidence → canon)
+//	e = edit (drops the event JSON into $EDITOR, accept the result)
+//	r = reject (delete the event from the timeline)
+//	s = skip (leave proposed, decide later)
+//	q = quit
 func timelineReviewCommand() *cobra.Command {
 	var slug string
 	cmd := &cobra.Command{

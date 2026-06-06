@@ -25,6 +25,26 @@ You have read:
 
 {{ readFile .inputs.priors_file }}
 
+# The author's private notebook (fog of war)
+
+{{ readFile .inputs.notebook_file }}
+
+The author's PRIVATE notes — secrets, where threads are going, the truth under the
+surface. Plan as someone who knows all of it: seed the tensions and foreshadowing the
+dossiers point to (use each scene's `withheld` / `tension` to plant what's coming). But
+knowing is not telling, and each dossier's `Reveal control` marks how far a secret may
+go:
+
+- **SEALED** secrets (SEALED / GRADUAL / "Tier-2/3") may be foreshadowed but NOT
+  revealed — plan scenes that circle and pressure them, never one that states them —
+  UNLESS this brief's `reveals:` frontmatter licenses that specific reveal.
+- **NEVER** secrets ("honour by absence" / "never on the page") are never planned onto
+  the page at all, even if the brief seems to ask — plan their pressure, never their
+  exposure.
+
+Canon (above) is what's already revealed and free to use. If the notebook section is
+empty, ignore it.
+
 # This installment's brief
 
 {{ readFile .inputs.brief_file }}
@@ -35,9 +55,11 @@ You have read:
 
 Produce a scene-by-scene outline the writer will follow. The brief
 lists beats; your outline turns each beat into a scene with
-deliberate weight — typically 1,000-1,500 words of prose each — so
-the final installment lands at the brief's target (typically 7,500
-words) without padding or summarising.
+deliberate weight — typically 1,500-2,200 words of prose each — so
+the final installment lands at the brief's target (~{{ .inputs.target_words }} words)
+without padding or summarising. Budget enough scenes (and enough per
+scene) that the sum actually reaches the target — under-budgeting here
+is the main reason finished installments come in short.
 
 **Hard rule, read first.** The world bible's `Rules` section is
 inviolable. Re-read it before planning. If the bible says "no magic,
@@ -64,8 +86,8 @@ enough texture per scene that 300 words isn't tempting. Each scene
 gets:
 
 1. **Setting** — concrete location, time of day, weather, sensory
-   anchors from the world bible (the cracked lens, the rotting
-   rope-walk, the salt-rimmed bell, the 112 steps).
+   anchors drawn from the world bible itself (the specific objects,
+   places, and textures it actually names).
 2. **Goal** — what the POV character is trying to do or understand
    in this scene. NOT plot-level ("refuse the proposal") but scene-
    level ("re-read the proposal for the third time, trying to find
@@ -122,7 +144,7 @@ Strict JSON, no preamble, no commentary. Schema:
 
 ```json
 {
-  "installment_target_words": 7500,
+  "installment_target_words": {{ .inputs.target_words }},
   "turning_point_scene": "<id of the scene where the installment pivots>",
   "scenes": [
     {

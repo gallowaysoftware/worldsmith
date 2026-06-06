@@ -44,6 +44,21 @@ type BriefFront struct {
 	// least one of its visibility.known_to entries is also in
 	// OnStageActors; non-knowers see the rumour instead.
 	OnStageActors []string `yaml:"on_stage_actors,omitempty"`
+
+	// Reveals lists the sealed notebook material this installment is
+	// LICENSED to bring onto the page — dossier slugs and/or short
+	// phrases naming the specific secret to surface. Everything else in
+	// the notebook stays sealed (subtext only). Items a dossier marks
+	// NEVER / honour-by-absence are never licensable, even if listed
+	// here. Drives the writer's reveal permission and the fog-check's
+	// allow-list. Empty (the default) = reveal nothing sealed.
+	Reveals []string `yaml:"reveals,omitempty"`
+
+	// TargetWords, when non-zero, sets this installment's target prose
+	// length (drives the outline's per-scene budgets). Empty = the
+	// pipeline default (~10,000). The series flow sets it per book so a
+	// chapter lands at ~5.5k; story/novel leave it 0 (default length).
+	TargetWords int `yaml:"target_words,omitempty"`
 }
 
 // ParseBrief splits brief.md into (frontmatter, body). When the
@@ -209,6 +224,39 @@ func WriteHistoricalContext(runDir string, events []Event, opts FilterOpts) (str
 	header += fmt.Sprintf("Year cutoff: %d. Events later than this year MUST NOT be referenced — they have not happened yet from the POV character's perspective.\n\n", opts.YearCutoff)
 	header += "Format per line: `year | kind | summary`. RUMOUR lines are the public distortion of events the POV character does not know the truth of — characters may believe them, the prose may state them as rumour, but treat them as suspect.\n\n"
 	if err := os.WriteFile(path, []byte(header+rendered), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// WriteLicensedReveals renders this installment's licensed-reveal allow-list into
+// runDir/licensed_reveals.md and returns the path. The writer reads it to know which
+// sealed notebook material it MAY surface this installment; the fog-check reads it as
+// the allow-list of permitted reveals. The file always exists after this call (a
+// "none" sentinel when the brief licenses nothing) so the prompts' readFile never
+// trips a missing-file error.
+func WriteLicensedReveals(runDir string, reveals []string) (string, error) {
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString("# Licensed reveals for this installment\n\n")
+	if len(reveals) == 0 {
+		b.WriteString("None. Reveal nothing sealed this installment — every notebook secret stays subtext only.\n")
+	} else {
+		b.WriteString("The brief LICENSES the following sealed material to be shown on the page in THIS installment. ")
+		b.WriteString("Everything else in the notebook stays sealed (subtext only). ")
+		b.WriteString("Items a dossier marks NEVER / honour-by-absence are never licensed, even if listed below.\n\n")
+		for _, r := range reveals {
+			r = strings.TrimSpace(r)
+			if r == "" {
+				continue
+			}
+			fmt.Fprintf(&b, "- %s\n", r)
+		}
+	}
+	path := runDir + string(os.PathSeparator) + "licensed_reveals.md"
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		return "", err
 	}
 	return path, nil

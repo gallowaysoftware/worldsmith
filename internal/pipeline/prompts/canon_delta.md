@@ -64,9 +64,9 @@ nothing else.
   discoveries. NOT every action in every scene — just the
   load-bearing ones. The "Doran told Ila the protocol" event matters;
   "Doran sat down" does not.
-- **Established relationships.** "Asha and the Cartographer are
-  estranged sisters." "The Harbour Guild owes Veska a debt." Just
-  the relationships, not the history that made them.
+- **Established relationships.** "X and Y are estranged sisters." "The
+  guild owes Z a debt." "A captor and a prisoner who have begun to read
+  each other." Just the relationships, not the history that made them.
 - **Established rules.** If the prose committed to a new constraint
   on magic / tech / society, write it as a rule. "Salt-bound oaths
   break the binder, not the bound." If the bible already covered

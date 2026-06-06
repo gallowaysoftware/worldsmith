@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/gallowaysoftware/vibe/vamp"
@@ -29,12 +30,19 @@ type BriefConfig struct {
 	// model as a house-style + continuity exemplar. os.DevNull when
 	// none exists.
 	ExemplarBriefFile string
+	// NotebookFile is the assembled author's notebook — lets the brief
+	// plan toward the author's private intentions (where threads are
+	// going, the reveal being built to). os.DevNull when none.
+	NotebookFile string
 }
 
 // BuildBrief constructs the one-stage pipeline that drafts a brief.
 func BuildBrief(cfg BriefConfig) (*vamp.Pipeline, error) {
 	if cfg.TargetWords == 0 {
 		cfg.TargetWords = 6500
+	}
+	if cfg.NotebookFile == "" {
+		cfg.NotebookFile = os.DevNull
 	}
 
 	p := vamp.New("worldsmith-brief").
@@ -52,6 +60,8 @@ func BuildBrief(cfg BriefConfig) (*vamp.Pipeline, error) {
 		vamp.Describe("Path to the timeline view through the current year."))
 	p.Input("exemplar_brief_file", vamp.WithDefault(cfg.ExemplarBriefFile),
 		vamp.Describe("Path to the most recent brief (format/continuity exemplar); os.DevNull when none."))
+	p.Input("notebook_file", vamp.WithDefault(cfg.NotebookFile),
+		vamp.Describe("Path to the assembled author's notebook (private dossiers). Empty/DevNull when none."))
 	p.Input("steer", vamp.WithDefault(cfg.Steer),
 		vamp.Describe("Optional one-line author direction for this installment."))
 	p.Input("installment_number", vamp.WithDefault(fmt.Sprintf("%d", cfg.InstallmentNumber)),

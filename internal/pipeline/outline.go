@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/gallowaysoftware/vibe/vamp"
@@ -18,10 +20,14 @@ type OutlineConfig struct {
 	PriorsFile            string
 	BriefFile             string
 	HistoricalContextFile string
+	NotebookFile          string
 	// Temperature lets the caller diversify candidates — sampling the
 	// same prompt at different temperatures yields genuinely different
 	// plans to choose between rather than near-duplicates.
 	Temperature float64
+	// TargetWords sets the installment's target prose length (drives the
+	// per-scene budgets the outline emits). 0 = default (~10,000).
+	TargetWords int
 }
 
 // BuildOutline constructs a one-stage pipeline that produces just the
@@ -34,6 +40,12 @@ func BuildOutline(cfg OutlineConfig) (*vamp.Pipeline, error) {
 	}
 	if cfg.Temperature == 0 {
 		cfg.Temperature = 0.4
+	}
+	if cfg.NotebookFile == "" {
+		cfg.NotebookFile = os.DevNull
+	}
+	if cfg.TargetWords == 0 {
+		cfg.TargetWords = 10000
 	}
 
 	p := vamp.New("worldsmith-outline").
@@ -53,6 +65,10 @@ func BuildOutline(cfg OutlineConfig) (*vamp.Pipeline, error) {
 		vamp.Describe("Path to this installment's brief.md."))
 	p.Input("historical_context_file", vamp.WithDefault(cfg.HistoricalContextFile),
 		vamp.Describe("Path to the pre-filtered timeline view."))
+	p.Input("notebook_file", vamp.WithDefault(cfg.NotebookFile),
+		vamp.Describe("Path to the assembled author's notebook (private dossiers). Empty/DevNull when none."))
+	p.Input("target_words", vamp.WithDefault(fmt.Sprintf("%d", cfg.TargetWords)),
+		vamp.Describe("Target prose length for this installment; the per-scene budgets must sum to it."))
 
 	p.RequireProfile("long_form")
 	p.RequireGPUMemory("~30GB during outline")

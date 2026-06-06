@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gallowaysoftware/vibe/contentkit"
 	"github.com/gallowaysoftware/vibe/vamp"
 )
 
@@ -98,17 +99,14 @@ func BuildSceneScript(cfg SceneConfig) (*vamp.Pipeline, error) {
 
 	// Deterministic render: tag each shot with a stable idx and re-emit as a
 	// {"items":[...]} array the per-shot foreach stages fan out over.
-	p.Render("enumerate_shots").
-		After(outline).
-		Prompt(`{"items": [
-{{- $shots := index (parseJSON .stages.scene_outline.output) "shots" -}}
-{{- range $i, $s := $shots -}}
-{{- if $i }},{{ end }}
-{"idx": {{ $i }}, "image_prompt": {{ toJSON (index $s "image_prompt") }}, "motion": {{ toJSON (index $s "motion") }}, "narration": {{ toJSON (index $s "narration") }}, "speaker": {{ toJSON (index $s "speaker") }}, "voice_id": {{ toJSON (index $s "voice_id") }}}
-{{- end }}
-] }`).
-		Output("shots.json").
-		OutputFormatJSON()
+	contentkit.EnumerateItems(p, contentkit.EnumerateConfig{
+		From:      outline,
+		StageName: "enumerate_shots",
+		Output:    "shots.json",
+		ArrayKey:  "shots",
+		IndexKey:  "idx",
+		Fields:    []string{"image_prompt", "motion", "narration", "speaker", "voice_id"},
+	})
 
 	return p.Build()
 }

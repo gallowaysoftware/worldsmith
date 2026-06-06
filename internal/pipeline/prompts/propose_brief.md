@@ -27,6 +27,17 @@ Propose boldly; they will steer.
 
 {{ readFile .inputs.priors_file }}
 
+# The author's private notebook (their intentions — where this is all going)
+
+{{ readFile .inputs.notebook_file }}
+
+These are the author's PRIVATE notes: the secrets, the reveals being built toward,
+where each thread is meant to go. Unlike the prose, the BRIEF is the author's own
+direction document — so use this to choose the next installment's target with the
+endgame in mind, and you MAY deliberately plan a reveal or a step toward one when
+the timing is right. Honour each dossier's "Reveal control" for pacing — don't
+burn a reveal the notes say to hold. If the section is empty, ignore it.
+
 # The author's most recent brief (your FORMAT + CONTINUITY exemplar)
 
 Match this document's structure, depth, and register. If it is empty,

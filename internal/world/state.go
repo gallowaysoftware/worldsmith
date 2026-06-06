@@ -231,10 +231,37 @@ func EnsurePriorsFile(l Layout, runDir string, upToButNotIncluding int) (string,
 	return path, nil
 }
 
-// AppendCanonDelta folds a freshly-finished installment's canon
-// delta into the running canon.md. Idempotent — checks for the
-// per-installment header before appending so re-running on the
-// same installment doesn't double up.
+// TruncateCanonFrom removes installment n's previously-extracted canon section (and
+// everything after it) from canon.md, keeping earlier installments' canon intact. Call
+// it BEFORE (re)generating installment n so the writer never reads a stale
+// self-extraction — that's the source of cross-run contradictions (a ship or date
+// renamed between runs). No-op when the section isn't present.
+func TruncateCanonFrom(l Layout, n int) error {
+	marker := fmt.Sprintf("## From installment %d\n", n)
+	b, err := os.ReadFile(l.CanonFile())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	text := string(b)
+	i := strings.Index(text, marker)
+	if i == -1 {
+		return nil
+	}
+	return os.WriteFile(l.CanonFile(), []byte(strings.TrimRight(text[:i], "\n")+"\n"), 0o644)
+}
+
+// AppendCanonDelta folds a freshly-finished installment's canon delta
+// into the running canon.md. It REPLACES rather than merely appends:
+// regenerating installment n drops n's previously-extracted section (and
+// anything after it) before installing the fresh delta. This is what makes
+// re-runs clean — the old behaviour (skip if the header already exists) kept
+// a stale delta extracted from now-replaced prose, which then contradicted
+// the new run (e.g. a ship renamed between runs). Because later installments
+// build on n, regenerating n invalidates them too, so cutting from n's header
+// to EOF is correct: regenerate the later ones to refill.
 func AppendCanonDelta(l Layout, n int) error {
 	delta, err := os.ReadFile(l.InstallmentFile(n, "canon_delta.md"))
 	if err != nil {
@@ -243,17 +270,23 @@ func AppendCanonDelta(l Layout, n int) error {
 		}
 		return err
 	}
-	header := fmt.Sprintf("\n## From installment %d\n\n", n)
+	// Trailing newline on the marker so "installment 1" can't prefix-match
+	// "installment 10".
+	marker := fmt.Sprintf("## From installment %d\n", n)
 	existing, _ := os.ReadFile(l.CanonFile())
-	if strings.Contains(string(existing), header) {
-		return nil
+	text := string(existing)
+	if i := strings.Index(text, marker); i != -1 {
+		text = strings.TrimRight(text[:i], "\n") + "\n"
+		if err := os.WriteFile(l.CanonFile(), []byte(text), 0o644); err != nil {
+			return err
+		}
 	}
 	f, err := os.OpenFile(l.CanonFile(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.WriteString(header); err != nil {
+	if _, err := f.WriteString(fmt.Sprintf("\n## From installment %d\n\n", n)); err != nil {
 		return err
 	}
 	_, err = f.Write(delta)

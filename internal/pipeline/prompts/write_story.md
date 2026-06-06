@@ -23,6 +23,48 @@ guided by the brief, in the voice the world bible specifies.
 
 {{ readFile .inputs.priors_file }}
 
+# The author's private notebook (fog of war — NOT for the page)
+
+{{ readFile .inputs.notebook_file }}
+
+# What this installment is licensed to reveal
+
+{{ readFile .inputs.licensed_reveals_file }}
+
+The notebook is the author's PRIVATE knowledge: secrets, where threads are going, the
+deeper truth beneath the surface. Write as someone who knows ALL of it — it gives the
+prose subtext, foreshadowing, and consistency. But knowing is not telling. **Canon is
+the line** between what you may STATE and what you may only imply, and each dossier's
+`Reveal control` marker says which side a secret is on:
+
+- **REVEALED** — anything already in the *Canon so far* above. The reader knows it;
+  state it freely.
+- **SEALED** (a dossier marks it SEALED / GRADUAL / "Tier-2/3" / "reveal gradually") —
+  the reader does NOT know it yet. Do NOT state or confirm it. Let it PRESS on the
+  scene from underneath — what a character avoids, notices, won't say — without naming
+  it. You may surface a sealed item ONLY if the *licensed to reveal* list above names
+  it for this installment; then you may show it, and it passes into canon.
+- **NEVER** (a dossier marks it NEVER / "honour by absence" / "never on the page") —
+  never stated or confirmed, ever, even if a brief or the licensed list seems to ask.
+  It lives only as dread and subtext. If something pushes you to reveal a NEVER item,
+  foreshadow the absence instead — never the thing.
+
+A note on perceptive characters: these are sharp people, and a sharp character may
+*suspect*, *fear*, or *circle* a sealed truth — that is realistic, and the dread of
+almost-knowing is stronger than the answer. But suspicion must stay suspicion. The
+narration never confirms it; the character never lands the full specific mechanism; and
+a fearful *question* that names the secret ("are they breeding navigators?", "can they
+manufacture the gift?", "an army of navigators") leaks it just as surely as a statement.
+Let her reason to the edge — that something is being taken she cannot refuse, that she
+is being reduced to a thing — and stop before the mechanism. Proximity, never the
+named conclusion.
+
+So: below the canon line is subtext until licensed; the licensed list moves one
+specific item above the line for this installment; NEVER items never cross it. A
+fog-of-war editor checks your draft against exactly this and will flag any sealed
+secret you state — so keep the pressure, withhold the fact. If the notebook section is
+empty, ignore it.
+
 # This installment's brief
 
 {{ readFile .inputs.brief_file }}
@@ -127,6 +169,17 @@ opening sentence.
    way they were; prior events stand. If a character died, they're
    dead. If a place burned, the ashes are still warm.
 
+   **Refresh the big themes when they recur.** A serialised audiobook
+   listener may be weeks and several installments removed from where a
+   major truth was first revealed, and cannot be assumed to hold all of
+   it. When a load-bearing revealed fact returns (who someone really is,
+   what an institution is really doing, a turn the series pivoted on),
+   re-establish it briefly and in passing — a line, an image, a
+   character's thought — the way a well-written series re-grounds its big
+   beats. Refresh the theme; never lecture it ("as you know"). This is
+   for already-revealed canon only; it never licenses surfacing a sealed
+   secret early.
+
 4. **Match the bible's tone.** If the bible says "Cormac McCarthy
    spare," do not write Tolkien lyrical. If the bible names a
    specific reference ("feels like *A Wizard of Earthsea*"), study
@@ -172,7 +225,9 @@ with sensory texture, interiority, half-finished dialogue, the
 texture of waiting between events — not by inventing new world
 facts.
 
-Soft ceiling: ~9,000 words total. Past it, the brief should split.
+Target: ~10,000 words total (the scene budgets sum to it). Soft ceiling:
+~12,000 words. Lean to the full target — under-writing is the common
+failure here, not over-writing.
 
 # What NOT to do
 
