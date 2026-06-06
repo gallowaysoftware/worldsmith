@@ -33,15 +33,70 @@ reveal them.
 > to **accept, edit, or discard**. Accepts are reversible (the prior version is
 > backed up).
 
+### Glossary
+
+- **Bible** — the published setting *you* author and own: `world.md` (history,
+  factions, tone, the rules) + `characters.json` (the cast). The LLM reads it but
+  never edits it.
+- **Rules** — the load-bearing "rules for the writer" section inside `world.md`:
+  your hard constraints ("no magic," "honor the calendar"). Every later stage,
+  including the expansion critic, enforces them.
+- **Canon** (`canon.md`) — the facts you've actually *shown readers* so far.
+  Grows append-only as you publish installments; what generation may freely
+  reference.
+- **Notebook** (`notebook/*.md`) — the author's-notebook layer: the author's
+  **private** knowledge (unrevealed secrets, where threads are going, deep
+  interiority). Grown by `expand`, accepted by you; drawn on for depth/subtext but
+  kept hidden from readers.
+- **Dossier** — one notebook entry: a single developed thread covering what's
+  established, the private truth, where it's going, interiority, connections, and
+  reveal control. `expand` produces dossiers as staged proposals.
+- **Brief** (`briefs/NNN.md`) — the per-installment direction document you write
+  and edit; the `story`/`novel` pipeline generates *from* it.
+- **Fog-of-war** — the reveal-control discipline that keeps notebook secrets and
+  not-yet-visible timeline events out of generated text until you choose to surface
+  them; timeline events carry visibility tiers that decide which stories see them.
+
 ---
+
+## Prerequisites
+
+worldsmith is a thin orchestrator on top of [vibe](https://github.com/gallowaysoftware/vibe):
+it builds vibe/vamp pipelines and asks vibe to run the models. It does **not** ship
+or manage models itself. Before anything works you need:
+
+- **vibe installed and its daemon running.** Every generation command (`story`,
+  `novel`, `series`, `brief`, `arc`, `expand`, `ask`, `codex`, `scene`,
+  `worldgen`, `timeline generate`, `score`, `bench`) shells out to vamp, which
+  talks to the vibe daemon. If vibe isn't up, these commands fail.
+- **The vibe profiles / services worldsmith requires** (these are the names vamp
+  resolves — they must exist in your vibe config):
+  - **`long_form`** — the LLM profile every text stage uses. The pipelines hint a
+    ≥27B, ≥128k-context model (e.g. `qwen3.6-27b-mtp-q6_k`); the OpenAI-compatible
+    endpoint is expected at `http://127.0.0.1:9001`.
+  - **`tts_kokoro`** — Kokoro-FastAPI narration TTS, expected at
+    `http://127.0.0.1:8880` (needed by `story`, `novel`, `series`, `scene`).
+  - **`comfyui`** — ComfyUI for cover-art (SDXL) and short-video stills, expected
+    at `http://127.0.0.1:8188` (needed by `story`/`novel`/`series` covers and by
+    `scene`).
+- **`ffmpeg`** on `PATH` for audio mixing and stitching multi-chapter `.m4b`s
+  (without it the per-chapter/per-installment files still stand on their own).
+- A GPU with headroom: a `story` run wants ~30GB during the LLM stages, ~6GB
+  during TTS, ~4GB during SDXL (the stages run sequentially, not all at once).
+
+`worldsmith activate` brings the above up by delegating to vamp's `activate`
+(the same plumbing vibe uses per-pipeline); it's idempotent, leaving
+already-running services alone. `worldsmith doctor` is the read-only check: it
+probes each required profile/service and exits non-zero if anything is missing,
+so it doubles as a CI gate.
 
 ## Install & bring up services
 
 ```bash
 go install github.com/gallowaysoftware/worldsmith/cmd/worldsmith@latest
 
-worldsmith activate     # start the LLM (long_form) + Kokoro TTS + ComfyUI
-worldsmith doctor       # read-only: what's up, what's missing
+worldsmith activate     # start the LLM (long_form) + Kokoro TTS + ComfyUI via vamp
+worldsmith doctor       # read-only: which required profiles/services are up
 ```
 
 Everything lives under `~/.local/state/worldsmith/<slug>/`.
@@ -145,6 +200,13 @@ worldsmith story my-world                 # prose → narration → episode.m4b
 worldsmith story my-world --candidates 4  # generate 4 outlines, auto-pick the strongest
 ```
 
+`story` flags: `--slug` (alternative to the positional arg), `--installment N`
+((re)generate a specific number instead of the next pending one — useful for
+iterating on a draft), `--narrator <voice>` (Kokoro voice id, default
+`am_fenrir`), `--candidates N` (outline best-of-N, default `1` = no rerank), and
+`--publish-to <dir>` (below). `novel`, `series write`, and `scene` accept the
+same `--narrator` / `--publish-to`.
+
 ### Novel → multi-hour audiobook
 ```bash
 worldsmith arc my-world --premise "the long war's first year" --chapters 25
@@ -152,10 +214,31 @@ worldsmith arc my-world --premise "the long war's first year" --chapters 25
 worldsmith novel my-world --target-chapters 25   # per-chapter, stitched into book.m4b
 ```
 
+> Note the flag names differ on purpose: `arc` takes `--chapters N` (the target
+> length of the spine it drafts); `novel` takes `--target-chapters N` (a cap on
+> how many of arc.json's chapters to render this run, `0` = all). `novel` also
+> writes an `arc.json` stub and stops if one doesn't exist yet.
+
+### Multi-book series → one chaptered .m4b per book
+```bash
+$EDITOR ~/.local/state/worldsmith/my-world/series.json   # YOU author: arc + books
+worldsmith series plan my-world           # drafts arc.json (per-book chapter beats) — edit it
+worldsmith series write my-world          # generates chapters → a chaptered .m4b per book
+```
+(`series plan` writes a `series.json` stub for you to fill in if none exists.)
+
 ### Short-form video (vertical, captioned)
 ```bash
 worldsmith scene my-world --shots 7       # phase 1 writes the shot list (LLM)…
 #   …phase 2 renders stills → image-to-video → voiceover → final.mp4
+```
+
+### Query, document, and measure
+```bash
+worldsmith ask my-world "what does the head of the secret police actually want?"
+#   answers from bible + canon + your private notebook (no fog — you're asking yourself)
+worldsmith codex my-world                 # compile a spoiler-safe reader's codex → codex.md
+worldsmith score my-world                 # per-installment quality scorecards + trend
 ```
 
 ### Publish to a library
@@ -195,14 +278,17 @@ before they write.
 ├── world.md            YOU write. Setting, factions, tone, the absolute rules. LLM never edits.
 ├── characters.json     YOU write. The cast.
 ├── canon.md            Auto-grown (append-only). What readers have been shown.
-├── arc.json            Optional. Novel chapter spine.
+├── codex.md            Optional. Spoiler-safe companion codex written by `codex`.
+├── arc.json            Optional. Novel/series chapter spine (drafted by `arc` or `series plan`).
+├── series.json         Optional. YOU write. Multi-book series arc + books (input to `series plan`).
 ├── notebook/           The author's PRIVATE notes — grown by `expand`, accepted by you.
 │   ├── <thread>.md
 │   └── .backups/<ts>/  Prior versions of any overwritten dossier (reversible).
 ├── .expand/<ts>/       Staged expansion PROPOSALS awaiting `expand review`.
 ├── briefs/             YOU write/edit. One brief per installment.
 │   └── NNN.md
-├── timeline/           Optional. Historical events + fog-of-war visibility.
+├── timeline.json       Optional. Historical events + fog-of-war visibility (or timeline/<era>.json).
+├── scenes/             Auto-written short-form video outputs (one dir per `scene`).
 └── installments/       Auto-written outputs.
     └── NNN/
         ├── story.md  summary.md  canon_delta.md  cover.png  episode.m4b
@@ -212,17 +298,31 @@ before they write.
 
 ## Commands at a glance
 
+Most commands take the world slug as a positional arg or via `--slug`.
+
 | Command | What it does |
 |---------|--------------|
-| `init <slug>` | Scaffold a new world to hand-author. |
-| `worldgen --theme ...` | LLM-draft a starting world from a theme. |
-| `expand <slug> [--seed ...] [--count N]` | Grow the private notebook (proposals). |
-| `expand review <slug>` | Accept / edit / reject staged dossiers. |
-| `brief <slug> [--steer ...]` | Draft the next installment's direction (you edit it). |
-| `story <slug> [--candidates N] [--publish-to ...]` | Short story → audiobook. |
-| `arc <slug>` / `novel <slug>` | Novel chapter spine → multi-hour audiobook. |
-| `scene <slug> [--shots N]` | Short-form vertical video. |
-| `timeline ...` | Manage + review the historical timeline (fog-of-war). |
-| `list` | All worlds + installment counts. |
-| `activate` / `doctor` | Bring services up / health check. |
-| `bench` | A/B candidate model profiles on a fixed installment. |
+| `init <slug>` | Scaffold a new world to hand-author (world.md + characters.json + briefs/001.md). |
+| `worldgen --theme <theme> [--count N] [--slug ...]` | LLM-draft one or more starting worlds from a theme. |
+| `expand <slug> [--seed ...] [--count N]` | Develop private notebook dossiers (staged proposals). |
+| `expand review <slug> [--accept-all] [--accept/--reject csv]` | Interactively (a/e/r/s/q) or non-interactively accept/reject staged dossiers. |
+| `brief <slug> [--steer ...] [--installment N] [--target-words N] [--force]` | Draft the next installment's direction document (you edit it). |
+| `story <slug> [--installment N] [--candidates N] [--narrator v] [--publish-to dir]` | Generate the next installment: prose → narration → episode.m4b. |
+| `arc <slug> [--premise ...] [--chapters N] [--force]` | Draft a novel's chapter spine (arc.json). |
+| `novel <slug> [--target-chapters N] [--candidates N] [--narrator v] [--publish-to dir]` | Render arc.json chapter-by-chapter, stitched into book.m4b. |
+| `series plan <slug> [--force]` | Draft per-book chapter beats (arc.json) from a hand-authored series.json. |
+| `series write <slug> [--book N] [--chapters N] [--narrator v] [--publish-to dir]` | Generate the series' chapters → one chaptered .m4b per book. |
+| `scene <slug> [--shots N] [--format ...] [--narrator v] [--publish-to dir]` | Generate the next short-form vertical (1080×1920, captioned) video. |
+| `ask <slug> <question...>` | Answer a question from the author's full knowledge (bible + canon + private notebook; no fog). |
+| `codex <slug> [--publish-to dir]` | Compile a spoiler-safe companion codex (codex.md) from bible + canon. |
+| `score <slug>` | Show per-installment quality scorecards (prose / continuity / fog) and the trend. |
+| `autopilot <slug...> [--max-staged N] [--threads N] [--idle-mib N] [--dry-run]` | Cron loop: when the GPU is idle, `expand` the named worlds and stage proposals for review. |
+| `timeline list <slug> [--proposed] [--all]` | List timeline events (canon by default; `--proposed` for LLM drafts). |
+| `timeline show <event-id> --slug <slug>` | Pretty-print one event's full record (including the visibility envelope). |
+| `timeline add --slug <slug>` | Append a hand-authored event (interactive prompts). |
+| `timeline review --slug <slug>` | Walk proposed events; accept / edit / reject each (a/e/r/s/q). |
+| `timeline generate --slug <slug>` | Run the five-pass LLM timeline generator; appends proposed events for review. |
+| `list` | All worlds + their installment counts. |
+| `activate` | Bring up the required vibe profiles/services via vamp (idempotent). |
+| `doctor` | Read-only: report which required vibe services are up (non-zero exit if missing). |
+| `bench --slug <slug> --installment N --candidates p1,p2[,...]` | A/B candidate `long_form` profiles on a fixed installment; outputs blinded for human scoring. |
