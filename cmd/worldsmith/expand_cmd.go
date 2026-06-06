@@ -1,11 +1,9 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -267,16 +265,6 @@ func runExpandReview(cmd *cobra.Command, slug string, acceptAll bool, acceptCSV,
 	}
 	fmt.Fprintf(out, "\naccepted %d, discarded %d\n", res.Accepted, res.Discarded)
 	return nil
-}
-
-func editFileInEditor(ctx context.Context, path string) error {
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vi"
-	}
-	c := exec.CommandContext(ctx, editor, path)
-	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-	return c.Run()
 }
 
 // sanitizeSlug keeps a model-proposed slug safe as a filename stem.

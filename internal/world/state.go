@@ -13,6 +13,7 @@ package world
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,6 +21,27 @@ import (
 	"strconv"
 	"strings"
 )
+
+// CopyFile copies src to dst, streaming so a large file (e.g. an .m4b) doesn't load
+// into memory. dst's final flush error surfaces (an explicit Close on top of the
+// deferred safety-net Close) so a truncated copy to a full disk / broken NAS share is
+// reported as a failure instead of silent success.
+func CopyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Close()
+}
 
 // Layout returns the canonical file paths for a world. Centralised
 // so every caller agrees on where things live.

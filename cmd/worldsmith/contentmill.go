@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -254,7 +253,7 @@ func runScene(cmd *cobra.Command, slug string) error {
 	// Free the LLM's VRAM before the image model loads — they can't co-reside
 	// on a 32GB card. Best-effort: a failure here just means the daemon's
 	// VRAM preflight will reject the image stage with a clear message.
-	freeActiveProfile(cmd)
+	freeActiveLLM(cmd, "the image/video render")
 
 	// Phase 2: ComfyUI + TTS render the shots into a vertical short.
 	fmt.Fprintln(cmd.OutOrStdout(), "phase 2/2: rendering shots (image -> video -> voice -> assemble)...")
@@ -315,16 +314,4 @@ func normalizeShotVoices(path string) error {
 		return err
 	}
 	return os.WriteFile(path, out, 0o644)
-}
-
-// freeActiveProfile shells `vibe stop` to unload the active LLM profile so the
-// image/video models have the GPU to themselves. Non-fatal.
-func freeActiveProfile(cmd *cobra.Command) {
-	c := exec.CommandContext(cmd.Context(), "vibe", "stop")
-	out, err := c.CombinedOutput()
-	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "  note: `vibe stop` to free LLM VRAM failed (%v); continuing\n", err)
-		return
-	}
-	_ = out
 }

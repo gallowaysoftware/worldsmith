@@ -165,11 +165,11 @@ func AcceptStaged(l Layout, d Dossier, backupStamp string) error {
 		if err := os.MkdirAll(bdir, 0o755); err != nil {
 			return err
 		}
-		if err := copyFileWS(dst, filepath.Join(bdir, d.Slug+".md")); err != nil {
+		if err := CopyFile(dst, filepath.Join(bdir, d.Slug+".md")); err != nil {
 			return fmt.Errorf("back up existing dossier: %w", err)
 		}
 	}
-	if err := copyFileWS(d.Path, dst); err != nil {
+	if err := CopyFile(d.Path, dst); err != nil {
 		return err
 	}
 	return os.Remove(d.Path)
@@ -177,11 +177,3 @@ func AcceptStaged(l Layout, d Dossier, backupStamp string) error {
 
 // DiscardStaged drops a staged dossier without touching the notebook.
 func DiscardStaged(d Dossier) error { return os.Remove(d.Path) }
-
-func copyFileWS(src, dst string) error {
-	b, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, b, 0o644)
-}

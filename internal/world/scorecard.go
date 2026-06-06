@@ -11,10 +11,12 @@ import (
 	"github.com/gallowaysoftware/vibe/contentkit"
 )
 
-// stripCodeFence removes a leading ```/```json line and a trailing ``` fence that a
-// model sometimes wraps JSON in despite OutputFormatJSON. Returns the inner bytes
-// (trimmed). No-op when there's no fence.
-func stripCodeFence(t []byte) []byte {
+// StripJSONFence removes a leading ```/```json line and a trailing ``` fence that a
+// model sometimes wraps JSON in despite OutputFormatJSON, returning the inner bytes
+// (trimmed). No-op when there's no fence. The single fence-stripper shared by every
+// check-report parser (scorecard, verdictCount, the span/fog fixers).
+func StripJSONFence(raw []byte) []byte {
+	t := bytes.TrimSpace(raw)
 	if !bytes.HasPrefix(t, []byte("```")) {
 		return t
 	}
@@ -57,7 +59,7 @@ func IsNonFinding(conflict, fix string) bool {
 // findings that survive the same drop the verify-loop applies — keeping the shipped
 // score aligned with the optimization target.
 func countFindingsJSON(raw []byte) (map[string]int, bool) {
-	t := stripCodeFence(bytes.TrimSpace(raw))
+	t := StripJSONFence(raw)
 	if len(t) == 0 || t[0] != '{' {
 		return nil, false
 	}
@@ -99,7 +101,7 @@ func countFindingsJSON(raw []byte) (map[string]int, bool) {
 // fine) apart from "a JSON object that wasn't a findings document" (the model emitted
 // the wrong shape — scoring it a clean 100 would be a lie).
 func isJSONObject(raw []byte) bool {
-	t := stripCodeFence(bytes.TrimSpace(raw))
+	t := StripJSONFence(raw)
 	if len(t) == 0 || t[0] != '{' {
 		return false
 	}
@@ -291,15 +293,27 @@ func FogScoreResult(reportPath string) contentkit.ScoreResult {
 // + continuity + fog-of-war (each parsed from its report). Recomputes prose from
 // story.md so it works even on installments generated before scorecards existed.
 func BuildScorecard(l Layout, n int) contentkit.Scorecard {
+	return BuildScorecardWithProse(l, n, nil)
+}
+
+// BuildScorecardWithProse is BuildScorecard with the prose analysis supplied by the
+// caller (when prose was just computed for metrics.json), avoiding a second read +
+// AnalyzeProse of the same story.md. Pass nil to have it read+analyse story.md itself.
+func BuildScorecardWithProse(l Layout, n int, prose *ProseMetrics) contentkit.Scorecard {
 	results := make([]contentkit.ScoreResult, 0, 3)
-	if raw, err := os.ReadFile(l.InstallmentFile(n, "story.md")); err == nil {
-		results = append(results, named("prose", ProseScoreResult(AnalyzeProse(string(raw)))))
+	switch {
+	case prose != nil:
+		results = append(results, named(AxisProse, ProseScoreResult(*prose)))
+	default:
+		if raw, err := os.ReadFile(l.InstallmentFile(n, "story.md")); err == nil {
+			results = append(results, named(AxisProse, ProseScoreResult(AnalyzeProse(string(raw)))))
+		}
 	}
-	results = append(results, named("continuity", ContinuityScoreResult(l.InstallmentFile(n, "continuity_report.md"))))
+	results = append(results, named(AxisContinuity, ContinuityScoreResult(l.InstallmentFile(n, "continuity_report.md"))))
 	// Fog-of-war is an axis only when the installment was fog-checked (the report
 	// exists). Installments generated before fog-checking simply lack the dimension.
 	if fogPath := l.InstallmentFile(n, "fog_report.md"); fileExistsWS(fogPath) {
-		results = append(results, named("fog", FogScoreResult(fogPath)))
+		results = append(results, named(AxisFog, FogScoreResult(fogPath)))
 	}
 	return contentkit.Scorecard{Item: fmt.Sprintf("%03d", n), Results: results}
 }
@@ -310,9 +324,11 @@ func fileExistsWS(path string) bool {
 }
 
 // WriteScorecard builds and writes scorecard.json for installment n. Non-fatal:
-// returns the card + any write error.
-func WriteScorecard(l Layout, n int) (contentkit.Scorecard, error) {
-	card := BuildScorecard(l, n)
+// returns the card + any write error. prose may carry an already-computed prose
+// analysis (see BuildScorecardWithProse) to avoid re-reading story.md; pass nil to
+// have it recompute.
+func WriteScorecard(l Layout, n int, prose *ProseMetrics) (contentkit.Scorecard, error) {
+	card := BuildScorecardWithProse(l, n, prose)
 	out, err := json.MarshalIndent(card, "", "  ")
 	if err != nil {
 		return card, err
@@ -335,13 +351,47 @@ func Overall(card contentkit.Scorecard) int {
 	return lowest
 }
 
-// --- helpers ---
+// Scorecard axis names. Used both to tag a result (named) and to look it up
+// (ResultByAxis), so the axis is matched by an explicit key rather than by a
+// loose Summary string-prefix.
+const (
+	AxisProse      = "prose"
+	AxisContinuity = "continuity"
+	AxisFog        = "fog"
+)
+
+// axisSep separates the axis name from the human summary inside ScoreResult.Summary.
+// contentkit.ScoreResult has no name field (it's an external type whose on-disk JSON we
+// must keep stable), so we encode the axis name as a "<axis>: <summary>" prefix and
+// parse it back out for exact-name matching.
+const axisSep = ": "
 
 func named(name string, r contentkit.ScoreResult) contentkit.ScoreResult {
 	if r.Summary != "" {
-		r.Summary = name + ": " + r.Summary
+		r.Summary = name + axisSep + r.Summary
 	}
 	return r
+}
+
+// AxisName returns the axis a tagged result belongs to (the token before the first
+// ": " in its Summary), or "" when untagged. Axis names never contain ": ", so this is
+// an exact recovery of the name set by named.
+func AxisName(r contentkit.ScoreResult) string {
+	if i := strings.Index(r.Summary, axisSep); i >= 0 {
+		return r.Summary[:i]
+	}
+	return ""
+}
+
+// ResultByAxis returns the card's result for the named axis (exact match on the axis
+// key), or a zero ScoreResult when the card has no such axis.
+func ResultByAxis(card contentkit.Scorecard, axis string) contentkit.ScoreResult {
+	for _, r := range card.Results {
+		if AxisName(r) == axis {
+			return r
+		}
+	}
+	return contentkit.ScoreResult{}
 }
 
 func topSlop(hits map[string]int) string {

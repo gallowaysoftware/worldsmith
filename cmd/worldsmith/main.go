@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -763,7 +762,7 @@ func runSeriesPlan(cmd *cobra.Command, slug string, force bool) error {
 		var parsed struct {
 			Chapters []world.ArcBeat `json:"chapters"`
 		}
-		if err := json.Unmarshal(dejson(raw), &parsed); err != nil {
+		if err := json.Unmarshal(world.StripJSONFence(raw), &parsed); err != nil {
 			return fmt.Errorf("parse book %d outline: %w", b.N, err)
 		}
 		if len(parsed.Chapters) == 0 {
@@ -1166,7 +1165,7 @@ func spliceReplacements(prosePath, replacementsPath, outPath string) (int, error
 			Replacement string `json:"replacement"`
 		} `json:"replacements"`
 	}
-	if err := json.Unmarshal(dejson(raw), &doc); err != nil {
+	if err := json.Unmarshal(world.StripJSONFence(raw), &doc); err != nil {
 		return 0, err
 	}
 	s := string(prose)
@@ -1555,7 +1554,7 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 
 	// Narration + cover prompt ran with the LLM resident. Free it so the cover phase has
 	// VRAM for ComfyUI, then render the cover + mix the m4b.
-	freeActiveLLM(cmd)
+	freeActiveLLM(cmd, "the cover phase")
 	root2, err := vamp.BuildRoot(func() (*vamp.Pipeline, error) {
 		return pipeline.BuildEpisodeFinalize(cfg)
 	})
@@ -1576,11 +1575,14 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 	// Deterministic prose-health read: slop density, the not-X-but-Y
 	// reflex, anaphora, repeated trigrams. Written to metrics.json
 	// beside the m4b. Non-fatal — a clean run shouldn't break because
-	// the audit couldn't run.
+	// the audit couldn't run. The analysis is reused for the scorecard
+	// below so story.md is read + analysed once, not twice.
+	var prose *world.ProseMetrics
 	if m, err := world.WriteProseMetrics(
 		layout.InstallmentFile(n, "story.md"),
 		layout.InstallmentFile(n, "metrics.json"),
 	); err == nil {
+		prose = &m
 		fmt.Fprintf(cmd.OutOrStdout(),
 			"prose: %d words, slop %.1f/1k (%d hits), not-x-but-y %d\n",
 			m.Words, m.SlopPer1000, m.SlopTotal, m.NotXButY)
@@ -1590,7 +1592,7 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 
 	// Quality scorecard: prose + continuity rolled into one tracked number
 	// (scorecard.json) so quality is diffable across installments, not a vibe.
-	if card, err := world.WriteScorecard(layout, n); err == nil {
+	if card, err := world.WriteScorecard(layout, n, prose); err == nil {
 		fmt.Fprintf(cmd.OutOrStdout(), "scorecard: overall %d/100\n", world.Overall(card))
 	} else {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: scorecard: %v\n", err)
@@ -1614,18 +1616,20 @@ func logVRAM(cmd *cobra.Command, label string) {
 	fmt.Fprintf(cmd.OutOrStdout(), "  [vram] %-40s %5d MiB used\n", label, used)
 }
 
-// freeActiveLLM unloads the active vibe LLM profile (best-effort) so the cover phase
-// has VRAM for ComfyUI — a large resident LLM (e.g. the 28GB EXL3) otherwise leaves a
-// 32GB card no room for even the small SDXL cover model. Services (comfyui, kokoro)
-// stay up; the next pipeline that needs the LLM re-activates it via its capability.
-func freeActiveLLM(cmd *cobra.Command) {
-	fmt.Fprintln(cmd.OutOrStdout(), "freeing the LLM profile for the cover phase (vibe stop)...")
+// freeActiveLLM unloads the active vibe LLM profile (best-effort) so the next phase has
+// VRAM for ComfyUI — a large resident LLM (e.g. the 28GB EXL3) otherwise leaves a 32GB
+// card no room for even the small SDXL cover model or the scene image/video models.
+// Services (comfyui, kokoro) stay up; the next pipeline that needs the LLM re-activates
+// it via its capability. purpose labels the run log. Non-fatal: a failure just risks an
+// OOM downstream if VRAM is tight.
+func freeActiveLLM(cmd *cobra.Command, purpose string) {
+	fmt.Fprintf(cmd.OutOrStdout(), "freeing the LLM profile for %s (vibe stop)...\n", purpose)
 	c := exec.CommandContext(cmd.Context(), "vibe", "stop")
 	c.Stdout = cmd.OutOrStdout()
 	c.Stderr = cmd.ErrOrStderr()
 	if err := c.Run(); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(),
-			"warning: could not free the LLM (vibe stop: %v) — the cover may OOM if VRAM is tight\n", err)
+			"warning: could not free the LLM (vibe stop: %v) — %s may OOM if VRAM is tight\n", err, purpose)
 	}
 	logVRAM(cmd, "after freeActiveLLM (LLM unloaded)")
 }
@@ -1652,19 +1656,6 @@ var (
 	breakingRe = regexp.MustCompile(`(\d+)\s+breaking`)
 )
 
-// dejson strips a ```/```json fence (if present) off a check/spanfix report and returns
-// the inner JSON bytes.
-func dejson(raw []byte) []byte {
-	t := bytes.TrimSpace(raw)
-	if bytes.HasPrefix(t, []byte("```")) {
-		if i := bytes.IndexByte(t, '\n'); i >= 0 {
-			t = t[i+1:]
-		}
-		t = bytes.TrimSpace(bytes.TrimSuffix(bytes.TrimSpace(t), []byte("```")))
-	}
-	return t
-}
-
 // applyFixes converges the prose deterministically: it (1) CUTS every fog LEAK span
 // outright — deletion can't re-leak and is monotonic, unlike a model rewrite that
 // re-states the sealed thing (the v11 failure: rewrites drove leaks 3→12) — and (2)
@@ -1688,7 +1679,7 @@ func applyFixes(prosePath, spanfixPath, fogReportPath, outPath string) (int, err
 				Span     string `json:"span"`
 			} `json:"findings"`
 		}
-		if json.Unmarshal(dejson(fogRaw), &fog) == nil {
+		if json.Unmarshal(world.StripJSONFence(fogRaw), &fog) == nil {
 			for _, f := range fog.Findings {
 				span := strings.TrimSpace(f.Span)
 				if strings.EqualFold(f.Severity, "LEAK") && span != "" {
@@ -1709,7 +1700,7 @@ func applyFixes(prosePath, spanfixPath, fogReportPath, outPath string) (int, err
 				Replacement string `json:"replacement"`
 			} `json:"replacements"`
 		}
-		if json.Unmarshal(dejson(raw), &doc) == nil {
+		if json.Unmarshal(world.StripJSONFence(raw), &doc) == nil {
 			for _, r := range doc.Replacements {
 				span := strings.TrimSpace(r.Span)
 				if span == "" || !strings.Contains(s, span) {
@@ -1765,15 +1756,7 @@ func verdictCount(path, severity string) int {
 	if err != nil {
 		return 0
 	}
-	t := bytes.TrimSpace(b)
-	// Strip a ```/```json fence the model sometimes adds despite OutputFormatJSON.
-	if bytes.HasPrefix(t, []byte("```")) {
-		if i := bytes.IndexByte(t, '\n'); i >= 0 {
-			t = t[i+1:]
-		}
-		t = bytes.TrimSuffix(bytes.TrimSpace(t), []byte("```"))
-		t = bytes.TrimSpace(t)
-	}
+	t := world.StripJSONFence(b)
 	if len(t) > 0 && t[0] == '{' {
 		var rep struct {
 			Findings []struct {
@@ -1845,13 +1828,15 @@ func normForMatch(s string) string {
 // "leaks" that existed only in notebook.md, never in the prose, which the deterministic
 // fog-cut then could never remove (the span isn't there to cut). A span not present in
 // the prose cannot be a leak or a contradiction IN the prose. Mechanical, no LLM call.
-// Returns the number dropped. Best-effort: any parse failure leaves the report untouched.
-func dropPhantomFindings(prosePath, reportPath string) int {
-	pb, err := os.ReadFile(prosePath)
-	if err != nil {
+// Returns the number dropped. Best-effort: any parse failure leaves the report
+// untouched. prose is the already-normalised (normForMatch) installment text — passed
+// in so auditFindings reads + normalises story.md once across both reports. An empty
+// prose (e.g. story.md unreadable) means "can't judge presence" → no drop, matching the
+// old read-failure behaviour rather than dropping every span as phantom.
+func dropPhantomFindings(prose, reportPath string) int {
+	if prose == "" {
 		return 0
 	}
-	prose := normForMatch(string(pb))
 	rb, err := os.ReadFile(reportPath)
 	if err != nil {
 		return 0
@@ -1859,7 +1844,7 @@ func dropPhantomFindings(prosePath, reportPath string) int {
 	var rep struct {
 		Findings []map[string]any `json:"findings"`
 	}
-	if json.Unmarshal(dejson(rb), &rep) != nil || len(rep.Findings) == 0 {
+	if json.Unmarshal(world.StripJSONFence(rb), &rep) != nil || len(rep.Findings) == 0 {
 		return 0
 	}
 	kept := make([]map[string]any, 0, len(rep.Findings))
@@ -1892,10 +1877,15 @@ func dropPhantomFindings(prosePath, reportPath string) int {
 // remaining continuity findings. After this, verdictCount reflects real, in-prose,
 // canon-backed findings — the signal the verify-loop and best-of-N optimise against.
 func auditFindings(cmd *cobra.Command, layout world.Layout, n int, installmentDir, prosePath, fogRpt, contRpt, worldFile, canonFile string) {
-	if d := dropPhantomFindings(prosePath, fogRpt); d > 0 {
+	// Read + normalise the prose once; both phantom-drops match spans against it.
+	var prose string
+	if pb, err := os.ReadFile(prosePath); err == nil {
+		prose = normForMatch(string(pb))
+	}
+	if d := dropPhantomFindings(prose, fogRpt); d > 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "  fog-audit: dropped %d phantom leak(s) not present in the prose\n", d)
 	}
-	if d := dropPhantomFindings(prosePath, contRpt); d > 0 {
+	if d := dropPhantomFindings(prose, contRpt); d > 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "  continuity-audit: dropped %d phantom finding(s) not present in the prose\n", d)
 	}
 	_ = verifyContinuity(cmd, layout, n, installmentDir, contRpt, worldFile, canonFile)
@@ -1916,7 +1906,7 @@ func verifyContinuity(cmd *cobra.Command, layout world.Layout, n int, installmen
 	var rep struct {
 		Findings []contFinding `json:"findings"`
 	}
-	if json.Unmarshal(dejson(raw), &rep) != nil || len(rep.Findings) == 0 {
+	if json.Unmarshal(world.StripJSONFence(raw), &rep) != nil || len(rep.Findings) == 0 {
 		return nil // unparseable or empty — leave as-is
 	}
 
@@ -1943,7 +1933,7 @@ func verifyContinuity(cmd *cobra.Command, layout world.Layout, n int, installmen
 			CanonQuote string `json:"canon_quote"`
 		} `json:"verdicts"`
 	}
-	if json.Unmarshal(dejson(vraw), &vrep) != nil {
+	if json.Unmarshal(world.StripJSONFence(vraw), &vrep) != nil {
 		return nil // bad audit output — keep findings unaudited
 	}
 
@@ -2306,23 +2296,6 @@ func validateNarrator(voice string) error {
 		voice, strings.Join(world.KnownVoices(), ", "))
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	// Keep the deferred Close only as a safety net; close explicitly
-	// so the final flush error (ENOSPC / broken NAS share on a
-	// publish target) surfaces instead of reporting a truncated copy
-	// as success.
-	defer out.Close()
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return out.Close()
-}
+// copyFile is the cmd-side alias for world.CopyFile, kept so the many call sites read
+// naturally. The single streaming implementation lives in the world package.
+func copyFile(src, dst string) error { return world.CopyFile(src, dst) }

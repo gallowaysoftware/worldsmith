@@ -85,18 +85,10 @@ func runCodex(cmd *cobra.Command, slug, publishTo string) error {
 			return err
 		}
 		pdst := filepath.Join(publishTo, slug+"-codex.md")
-		if err := copyFileCodex(dst, pdst); err != nil {
+		if err := copyFile(dst, pdst); err != nil {
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "  published: %s\n", pdst)
 	}
 	return nil
-}
-
-func copyFileCodex(src, dst string) error {
-	b, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, b, 0o644)
 }

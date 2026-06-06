@@ -6,6 +6,21 @@ import (
 	"testing"
 )
 
+func TestStripJSONFence(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"{\"a\":1}", `{"a":1}`},
+		{"```json\n{\"a\":1}\n```", `{"a":1}`},
+		{"```\n{\"a\":1}\n```", `{"a":1}`},
+		{"   {\"a\":1}   ", `{"a":1}`},
+		{"not json at all", "not json at all"},
+	}
+	for _, c := range cases {
+		if got := string(StripJSONFence([]byte(c.in))); got != c.want {
+			t.Errorf("StripJSONFence(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestCountFindingsJSON_FenceAndCounts(t *testing.T) {
 	cases := []struct {
 		name string

@@ -448,17 +448,10 @@ func editEventInteractive(ctx context.Context, e world.Event) (world.Event, erro
 	if err := tmp.Close(); err != nil {
 		return e, err
 	}
-	editor := os.Getenv("VISUAL")
-	if editor == "" {
-		editor = os.Getenv("EDITOR")
-	}
-	if editor == "" {
-		editor = "vi"
-	}
 	// Re-use the parent stdin/stdout/stderr so the editor draws on
 	// the same terminal.
-	ed := newEditorCmd(ctx, editor, tmpPath)
-	if err := ed.Run(); err != nil {
+	editor := resolveEditor()
+	if err := newEditorCmd(ctx, editor, tmpPath).Run(); err != nil {
 		return e, fmt.Errorf("%s exited non-zero: %w", editor, err)
 	}
 	updated, err := os.ReadFile(tmpPath)

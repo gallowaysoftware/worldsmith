@@ -56,9 +56,9 @@ func runScore(cmd *cobra.Command, slug string) error {
 		card := world.BuildScorecard(layout, n)
 		ov := world.Overall(card)
 		overalls = append(overalls, ov)
-		prose := resultByName(card, "prose")
-		cont := resultByName(card, "continuity")
-		fog := resultByName(card, "fog")
+		prose := world.ResultByAxis(card, world.AxisProse)
+		cont := world.ResultByAxis(card, world.AxisContinuity)
+		fog := world.ResultByAxis(card, world.AxisFog)
 		fmt.Fprintf(out, "%03d   %3d/100   %-44s %-26s %s\n", n, ov, trimSummary(prose), trimSummary(cont), fogCol(fog))
 	}
 
@@ -82,15 +82,6 @@ func runScore(cmd *cobra.Command, slug string) error {
 		fmt.Fprintf(out, "\ntrend: latest %d vs prior-mean %d  %s\n", latest, prevMean, arrow)
 	}
 	return nil
-}
-
-func resultByName(card contentkit.Scorecard, name string) contentkit.ScoreResult {
-	for _, r := range card.Results {
-		if len(r.Summary) >= len(name) && r.Summary[:len(name)] == name {
-			return r
-		}
-	}
-	return contentkit.ScoreResult{}
 }
 
 // fogCol renders the fog axis, or an em-dash when the installment predates
