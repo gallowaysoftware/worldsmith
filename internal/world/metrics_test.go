@@ -1,6 +1,9 @@
 package world
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestAnalyzeProse_Basic(t *testing.T) {
 	text := "The harbour was quiet. She walked to the water. The bell rang once."
@@ -86,5 +89,44 @@ func TestAnalyzeProse_Empty(t *testing.T) {
 	m := AnalyzeProse("")
 	if m.Words != 0 || m.SlopTotal != 0 || m.SlopPer1000 != 0 {
 		t.Errorf("empty text should yield zero metrics, got %+v", m)
+	}
+}
+
+func TestOffendingSentences(t *testing.T) {
+	text := "It was a long and quiet morning aboard the orbital station. " +
+		"It was colder there than the flight logs had predicted. " +
+		"It was the third alarm that finally woke the sleeping crew. " + // 3rd "it was" -> flagged
+		"It was nothing the thick manual had ever prepared them for. " + // 4th "it was" -> flagged
+		"The old reactor pulsed against its worn magnetic bottle. " + // slop "pulsed"
+		"The verdict was not mercy but a slower kind of cruelty." // not-X-but-Y
+
+	spans := OffendingSentences(text, 40)
+	if len(spans) != 4 {
+		t.Fatalf("flagged %d sentences, want 4: %+v", len(spans), spans)
+	}
+	// Every span must be a verbatim substring so it can be spliced back.
+	for _, s := range spans {
+		if !strings.Contains(text, s.Span) {
+			t.Errorf("span not found verbatim in text: %q", s.Span)
+		}
+	}
+	// The first two "It was" sentences are kept (variety not over-corrected); only
+	// the excess are flagged.
+	if strings.Contains(spans[0].Span, "long and quiet morning") {
+		t.Errorf("first repeated opener should be kept, not flagged")
+	}
+	joined := ""
+	for _, s := range spans {
+		joined += s.Reason + "\n"
+	}
+	for _, want := range []string{"repeated opener", "slop", "not-X-but-Y"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing reason %q in:\n%s", want, joined)
+		}
+	}
+
+	// Clean prose flags nothing.
+	if got := OffendingSentences("The harbour was quiet. She walked to the cold water. A bell rang once.", 40); got != nil {
+		t.Errorf("clean prose flagged %d sentences, want 0", len(got))
 	}
 }

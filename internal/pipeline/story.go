@@ -815,6 +815,61 @@ func BuildSpanFix(cfg SpanFixConfig) (*vamp.Pipeline, error) {
 	return p.Build()
 }
 
+// ProsePolishConfig drives the style-polish pass: recast a specific set of
+// flagged sentences (over-used openers, slop terms, the not-X-but-Y cadence)
+// without changing meaning or length. Like BuildSpanFix it feeds the model only
+// the flagged spans — never the whole document — so the model can't lapse into
+// reproduce-the-doc or silently compress length; the CLI splices each
+// replacement back by exact substring.
+type ProsePolishConfig struct {
+	// SpansFile is the path to the JSON list of offending sentences
+	// ({"sentences":[{"span","reason"}]}) produced by world.OffendingSentences.
+	SpansFile string
+	// OutputName is the rendered replacements filename; defaults to
+	// "prose_polish.json".
+	OutputName string
+}
+
+// BuildProsePolish constructs the one-stage pipeline that returns a JSON list of
+// {span, replacement} recasts for each flagged sentence — the per-scene flow's
+// missing style remediation (edit_story is a pass-through in PreEdited mode, so
+// slop/anaphora otherwise ship unfixed).
+func BuildProsePolish(cfg ProsePolishConfig) (*vamp.Pipeline, error) {
+	if cfg.OutputName == "" {
+		cfg.OutputName = "prose_polish.json"
+	}
+	p := vamp.New("worldsmith-prose-polish").
+		Describe("Recast flagged sentences (repeated openers, slop, not-X-but-Y) without changing meaning or length.")
+
+	p.Input("spans_file", vamp.Required(), vamp.WithDefault(cfg.SpansFile),
+		vamp.Describe("Path to the JSON list of offending sentences ({sentences:[{span,reason}]})."))
+
+	p.RequireProfile("long_form")
+	p.CapabilityModel("long_form", vamp.ModelHint{
+		MinParams: "27B", MinContext: 131072,
+		SuggestedModel: "qwen3.6-27b-mtp-q6_k",
+	})
+
+	p.Text("prose_polish").
+		Capability("long_form").
+		PromptFS(PromptsFS, "prose_polish.md").
+		Output(cfg.OutputName).
+		OutputFormatJSON().
+		Param("temperature", 0.5).
+		// Up to ~40 sentence rewrites + JSON scaffolding fits comfortably.
+		Param("max_tokens", 12288).
+		Param("chat_template_kwargs", map[string]any{"enable_thinking": false}).
+		Param("min_p", 0.05).
+		Retry(&vamp.RetryPolicy{
+			MaxAttempts:    3,
+			InitialBackoff: 5 * time.Second,
+			MaxBackoff:     30 * time.Second,
+			RetryOn:        []string{"transient", "invalid_output"},
+		})
+
+	return p.Build()
+}
+
 // ContinuityVerifyConfig configures the adversarial false-positive audit of the
 // continuity findings (see BuildContinuityVerify).
 type ContinuityVerifyConfig struct {

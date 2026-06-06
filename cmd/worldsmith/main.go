@@ -1049,6 +1049,112 @@ func runStory(cmd *cobra.Command, slug string) error {
 // narrates once. cfg is taken by value so an attempt's mutations don't leak back to the caller.
 // NOTE: the returned path is a shared in-dir file (candidate_0.md / polished_N.md); the caller
 // must copy it aside before the next attempt overwrites it.
+// styleBadness is a deterministic scalar of the prose tells the scorecard
+// penalises — slop hits, the not-X-but-Y reflex, and anaphora (summed over-used
+// opener counts). Lower is better; used to keep a style-polish pass ONLY when it
+// measurably improves the prose.
+func styleBadness(text string) int {
+	m := world.AnalyzeProse(text)
+	b := m.SlopTotal + m.NotXButY
+	for _, o := range m.RepeatedOpeners {
+		b += o.Count
+	}
+	return b
+}
+
+// spliceReplacements applies a {replacements:[{span,replacement}]} document to the
+// prose at prosePath by exact first-occurrence substring replacement (the same
+// length-safe mechanism applyFixes uses for continuity), writing the result to
+// outPath. Returns how many replacements landed. A span that no longer matches
+// verbatim, is empty, or is unchanged is skipped.
+func spliceReplacements(prosePath, replacementsPath, outPath string) (int, error) {
+	prose, err := os.ReadFile(prosePath)
+	if err != nil {
+		return 0, err
+	}
+	raw, err := os.ReadFile(replacementsPath)
+	if err != nil {
+		return 0, err
+	}
+	var doc struct {
+		Replacements []struct {
+			Span        string `json:"span"`
+			Replacement string `json:"replacement"`
+		} `json:"replacements"`
+	}
+	if err := json.Unmarshal(dejson(raw), &doc); err != nil {
+		return 0, err
+	}
+	s := string(prose)
+	applied := 0
+	for _, r := range doc.Replacements {
+		span := strings.TrimSpace(r.Span)
+		rep := strings.TrimSpace(r.Replacement)
+		if span == "" || rep == "" || span == rep || !strings.Contains(s, span) {
+			continue
+		}
+		s = strings.Replace(s, span, rep, 1)
+		applied++
+	}
+	if err := os.WriteFile(outPath, []byte(s), 0o644); err != nil {
+		return 0, err
+	}
+	return applied, nil
+}
+
+// stylePolish runs the metrics-driven prose-style remediation the per-scene flow
+// otherwise lacks: extract the exact offending sentences (over-used openers, slop,
+// not-X-but-Y), have the LLM recast ONLY those, splice the recasts back in, and
+// keep the result only when measured style-badness drops. Bounded passes; returns
+// the path to the best prose (the input unchanged when nothing improved). Best-effort
+// — any failure ships the unpolished prose rather than breaking the chapter.
+func stylePolish(cmd *cobra.Command, layout world.Layout, n int, installmentDir, prosePath string) string {
+	const maxPasses = 2
+	cur := prosePath
+	for pass := 1; pass <= maxPasses; pass++ {
+		raw, err := os.ReadFile(cur)
+		if err != nil {
+			return cur
+		}
+		text := string(raw)
+		spans := world.OffendingSentences(text, 40)
+		if len(spans) < 3 {
+			break // already clean enough to leave alone
+		}
+		spansPath := layout.InstallmentFile(n, "style_spans.json")
+		payload, err := json.Marshal(map[string]any{"sentences": spans})
+		if err != nil {
+			return cur
+		}
+		if err := os.WriteFile(spansPath, payload, 0o644); err != nil {
+			return cur
+		}
+		if err := runPipeline(installmentDir, func() (*vamp.Pipeline, error) {
+			return pipeline.BuildProsePolish(pipeline.ProsePolishConfig{SpansFile: spansPath})
+		}); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "style polish pass %d: %v (shipping unpolished)\n", pass, err)
+			return cur
+		}
+		outPath := layout.InstallmentFile(n, fmt.Sprintf("style_polished_%d.md", pass))
+		applied, err := spliceReplacements(cur, layout.InstallmentFile(n, "prose_polish.json"), outPath)
+		if err != nil || applied == 0 {
+			break
+		}
+		polished, err := os.ReadFile(outPath)
+		if err != nil {
+			break
+		}
+		before, after := styleBadness(text), styleBadness(string(polished))
+		fmt.Fprintf(cmd.OutOrStdout(),
+			"style polish pass %d: recast %d sentence(s), style-badness %d -> %d\n", pass, applied, before, after)
+		if after >= before {
+			break // no improvement — keep the prior best
+		}
+		cur = outPath
+	}
+	return cur
+}
+
 func convergeProse(cmd *cobra.Command, layout world.Layout, n int, cfg pipeline.StoryConfig, installmentDir string) (bestPath string, bestBad int, outlineJSON string, err error) {
 	// Per-scene authoring: outline → write each scene as its own LLM pass (sequential,
 	// each seeing the prior scenes) → stitch. This is how installments hit length —
@@ -1272,6 +1378,7 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 	fmt.Fprintf(cmd.OutOrStdout(), "installment: %d\n", n)
 	fmt.Fprintf(cmd.OutOrStdout(), "brief: %s\n", layout.BriefFile(n))
 	fmt.Fprintln(cmd.OutOrStdout(), "")
+	logVRAM(cmd, fmt.Sprintf("installment %d start", n))
 
 	// Best-of-N: prose generation is stochastic — the same engine yields a few different
 	// subtle findings each run (observed 3 one run, 7 the next, same chapter). So generate
@@ -1318,6 +1425,14 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 		fmt.Fprintf(cmd.OutOrStdout(), "best-of-%d: shipping the cleanest attempt (%d unresolved finding(s))\n", attempts, bestBad)
 	}
 
+	// Prose-style polish: the per-scene draft ships with no slop/anaphora cleanup
+	// (edit_story is a pass-through in PreEdited mode, and the verify-loop only fixes
+	// fog/continuity). Do a metrics-driven, length-safe pass here — recast only the
+	// flagged sentences (over-used openers, slop, not-X-but-Y) and splice them back —
+	// keeping the result only when measured style-badness actually drops. Runs with the
+	// LLM still resident, before the narration phase frees it.
+	bestConverged = stylePolish(cmd, layout, n, installmentDir, bestConverged)
+
 	// Phase 3: narrate + finalize on the BEST prose. Copy it to a stable file so the
 	// pipeline reads it as a DraftFile (PreEdited = no second rewrite). Phase 3 re-runs
 	// the checks, so the shipped reports + scorecard describe this exact prose.
@@ -1329,11 +1444,16 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 	cfg.OutlineJSON = bestOutline
 	cfg.PreEdited = true
 	cfg.SkipNarration = false
+	// LLM is resident here; the narration pipeline frees it (FreeProfileAfter on
+	// showrunner) BEFORE cast_voice/TTS runs — so a healthy run shows VRAM fall
+	// mid-pipeline rather than holding LLM+TTS together (the old freeze).
+	logVRAM(cmd, fmt.Sprintf("ch%d before narration (LLM resident)", n))
 	if err := runPipeline(installmentDir, func() (*vamp.Pipeline, error) {
 		return pipeline.BuildStory(cfg)
 	}); err != nil {
 		return fmt.Errorf("installment %d (narration): %w", n, err)
 	}
+	logVRAM(cmd, fmt.Sprintf("ch%d after narration (TTS done)", n))
 	// Phase 3 re-ran the raw checks; audit them once more so the SHIPPED reports +
 	// scorecard describe the real (in-prose, canon-backed) findings, not the checkers'
 	// raw over-flags / notebook hallucinations.
@@ -1390,6 +1510,20 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 	return nil
 }
 
+// logVRAM prints current GPU VRAM usage with a label. It exists to make the
+// narration-phase VRAM pressure that once hard-locked the box observable in the
+// run log: a healthy chapter shows VRAM fall from ~LLM-resident down to TTS-only
+// across the narration phase (the FreeProfileAfter unload) and again after
+// freeActiveLLM, never climbing toward the card's ceiling. Best-effort — silent
+// when nvidia-smi isn't on PATH (e.g. CI), so it never affects a run's outcome.
+func logVRAM(cmd *cobra.Command, label string) {
+	used, err := gpuUsedMiB()
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "  [vram] %-40s %5d MiB used\n", label, used)
+}
+
 // freeActiveLLM unloads the active vibe LLM profile (best-effort) so the cover phase
 // has VRAM for ComfyUI — a large resident LLM (e.g. the 28GB EXL3) otherwise leaves a
 // 32GB card no room for even the small SDXL cover model. Services (comfyui, kokoro)
@@ -1403,6 +1537,7 @@ func freeActiveLLM(cmd *cobra.Command) {
 		fmt.Fprintf(cmd.ErrOrStderr(),
 			"warning: could not free the LLM (vibe stop: %v) — the cover may OOM if VRAM is tight\n", err)
 	}
+	logVRAM(cmd, "after freeActiveLLM (LLM unloaded)")
 }
 
 // runPipeline builds and executes a vamp pipeline in runDir. Shared by the per-scene

@@ -170,6 +170,87 @@ func AnalyzeProse(text string) ProseMetrics {
 	return m
 }
 
+// OffendingSpan is one sentence flagged for a style rewrite, paired with the
+// reason(s) it tripped — fed to the prose-polish pass so the model recasts ONLY
+// the offending sentences (length-safe span splice) instead of rewriting the
+// whole document (which compresses length).
+type OffendingSpan struct {
+	Span   string `json:"span"`
+	Reason string `json:"reason"`
+}
+
+// OffendingSentences returns up to maxSpans verbatim sentence spans that drive
+// the prose score down — the same signals AnalyzeProse measures, localised to
+// the exact sentences so they can be surgically recast:
+//   - a sentence sharing an over-used opening stem (kept the first two of each
+//     stem so variety isn't over-corrected; the excess are flagged),
+//   - a sentence containing a slop term,
+//   - a sentence using the "not X but Y" antithesis cadence.
+//
+// Spans are the original-case sentence bodies (verbatim substrings of text), so
+// the caller can splice replacements back by exact match. Returns nil when the
+// prose is already clean.
+func OffendingSentences(text string, maxSpans int) []OffendingSpan {
+	if maxSpans <= 0 {
+		maxSpans = 40
+	}
+	m := AnalyzeProse(text)
+	over := make(map[string]bool, len(m.RepeatedOpeners))
+	for _, o := range m.RepeatedOpeners {
+		over[o.Phrase] = true
+	}
+	openerSeen := map[string]int{}
+	seenSpan := map[string]bool{}
+	var out []OffendingSpan
+	for _, s := range splitSentencesForMetrics(text) {
+		if len(out) >= maxSpans {
+			break
+		}
+		s = strings.TrimSpace(s)
+		// Too short to locate uniquely / safely splice.
+		if len(s) < 25 || seenSpan[s] {
+			continue
+		}
+		var reasons []string
+		toks := wordRe.FindAllString(strings.ToLower(s), -1)
+		if len(toks) >= 2 {
+			stem := toks[0] + " " + toks[1]
+			if over[stem] {
+				openerSeen[stem]++
+				if openerSeen[stem] > 2 { // keep the first two; flag the rest
+					reasons = append(reasons, `repeated opener "`+stem+`"`)
+				}
+			}
+		}
+		ls := strings.ToLower(s)
+		for term := range m.SlopHits {
+			var hit bool
+			if strings.Contains(term, " ") {
+				hit = strings.Contains(ls, term)
+			} else {
+				for _, t := range toks {
+					if t == term {
+						hit = true
+						break
+					}
+				}
+			}
+			if hit {
+				reasons = append(reasons, `slop "`+term+`"`)
+				break
+			}
+		}
+		if notXButYRe.MatchString(s) {
+			reasons = append(reasons, "not-X-but-Y cadence")
+		}
+		if len(reasons) > 0 {
+			seenSpan[s] = true
+			out = append(out, OffendingSpan{Span: s, Reason: strings.Join(reasons, "; ")})
+		}
+	}
+	return out
+}
+
 // splitSentencesForMetrics is a lightweight sentence splitter for the
 // metrics pass only. It is deliberately separate from the TTS-side
 // splitter (which packs to a char budget); here we just want
