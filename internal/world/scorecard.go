@@ -259,13 +259,13 @@ func Overall(card contentkit.Scorecard) int {
 	if len(card.Results) == 0 {
 		return 0
 	}
-	min := 100
+	lowest := 100
 	for _, r := range card.Results {
-		if r.Score < min {
-			min = r.Score
+		if r.Score < lowest {
+			lowest = r.Score
 		}
 	}
-	return min
+	return lowest
 }
 
 // --- helpers ---

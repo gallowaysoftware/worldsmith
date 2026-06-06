@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -140,7 +141,7 @@ func WriteWorldFromSeed(l Layout, s WorldSeed, seedJSON []byte) error {
 	return nil
 }
 
-func (l Layout) worldSeedFile() string { return l.Root + "/world_seed.json" }
+func (l Layout) worldSeedFile() string { return filepath.Join(l.Root, "world_seed.json") }
 
 func (s WorldSeed) renderWorldMarkdown() string {
 	var b strings.Builder

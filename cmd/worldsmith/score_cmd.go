@@ -107,7 +107,12 @@ func trimSummary(r contentkit.ScoreResult) string {
 	// drop the "<name>: " prefix for compact display
 	for i := 0; i < len(s); i++ {
 		if s[i] == ':' {
-			return fmt.Sprintf("%3d %s", r.Score, s[i+2:])
+			// A bare trailing ':' (i == len-1) leaves no "<colon><space>"
+			// suffix to slice — guard so we never index past the end.
+			if i+2 <= len(s) {
+				return fmt.Sprintf("%3d %s", r.Score, s[i+2:])
+			}
+			return fmt.Sprintf("%3d %s", r.Score, s)
 		}
 	}
 	return fmt.Sprintf("%3d %s", r.Score, s)

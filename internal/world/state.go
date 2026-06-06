@@ -12,7 +12,6 @@
 package world
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -125,7 +124,9 @@ func List() ([]string, error) {
 	}
 	var out []string
 	for _, e := range entries {
-		if e.IsDir() {
+		// Skip dot-prefixed scratch dirs (e.g. orphaned .worldgen-*
+		// temp dirs a killed worldgen run leaves under DefaultRoot).
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
 			out = append(out, e.Name())
 		}
 	}
@@ -273,7 +274,14 @@ func AppendCanonDelta(l Layout, n int) error {
 	// Trailing newline on the marker so "installment 1" can't prefix-match
 	// "installment 10".
 	marker := fmt.Sprintf("## From installment %d\n", n)
-	existing, _ := os.ReadFile(l.CanonFile())
+	// A non-ENOENT read error here must abort: if we silently treat
+	// canon as empty we skip the replace-from-marker branch and
+	// double-append installment n's section — the exact contradiction
+	// this function exists to prevent.
+	existing, err := os.ReadFile(l.CanonFile())
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	text := string(existing)
 	if i := strings.Index(text, marker); i != -1 {
 		text = strings.TrimRight(text[:i], "\n") + "\n"
@@ -289,33 +297,12 @@ func AppendCanonDelta(l Layout, n int) error {
 	if _, err := fmt.Fprintf(f, "\n## From installment %d\n\n", n); err != nil {
 		return err
 	}
-	_, err = f.Write(delta)
-	return err
-}
-
-// CharactersDoc is the on-disk shape of characters.json. Loose
-// schema — the file gets piped into prompts as raw JSON, the engine
-// doesn't strictly type the cast.
-type CharactersDoc struct {
-	Characters []map[string]any `json:"characters"`
-}
-
-// LoadCharacters reads + parses the characters.json file. Returns
-// an empty doc + nil error when the file doesn't exist so a brand-
-// new world without a cast doesn't break the story pipeline.
-func LoadCharacters(l Layout) (CharactersDoc, error) {
-	raw, err := os.ReadFile(l.CharactersFile())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return CharactersDoc{}, nil
-		}
-		return CharactersDoc{}, err
+	// Close explicitly so a flush error (e.g. ENOSPC) on this durable
+	// cross-installment state surfaces instead of being lost in defer.
+	if _, err := f.Write(delta); err != nil {
+		return err
 	}
-	var doc CharactersDoc
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return CharactersDoc{}, fmt.Errorf("parse %s: %w", l.CharactersFile(), err)
-	}
-	return doc, nil
+	return f.Close()
 }
 
 // ScaffoldWorld writes stub files into a fresh world dir. Used by

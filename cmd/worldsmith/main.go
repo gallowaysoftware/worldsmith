@@ -42,7 +42,6 @@ var (
 	storyInstallment int
 	storyNarrator    string
 	storyPublishTo   string
-	storyCandidates  int
 	storyBestOf      int = 1
 )
 
@@ -131,15 +130,19 @@ number's direction, assembles all prior summaries + canon into
 context, and runs the per-installment pipeline.
 
 The pipeline:
-  write_story   draft prose (5-8k words)
-  edit_story    quality / cut pass
-  canon_delta   atomic facts → canon.md
-  summarize     200-400 word recap → priors_file for next call
-  compose_cover SDXL prompt for installment cover
+  outline_story  scene plan + per-scene word budgets (~10k target)
+  write_story    per-scene authoring → assembled draft
+  edit_story     quality / cut pass (+ continuity/fog verify loop)
+  canon_delta    atomic facts → canon.md
+  summarize      200-400 word recap → priors_file for next call
+  compose_cover  SDXL prompt for installment cover
   generate_cover ComfyUI runs the SDXL workflow
-  showrunner    paragraphs → narration script
-  cast_voice    Kokoro per-segment TTS
-  mix_episode   concat + loudnorm → episode.m4b (with cover + metadata)
+  showrunner     paragraphs → narration script
+  cast_voice     Kokoro per-segment TTS
+  mix_episode    concat + loudnorm → episode.m4b (with cover + metadata)
+
+--best-of N generates the prose N times and ships the lowest-badness
+convergence; narration runs once, on the winner.
 
 --installment N regenerates a specific installment instead of the
 next pending. Useful for iterating on a draft.
@@ -163,7 +166,7 @@ Installment NNN.m4b".`,
 	cmd.Flags().IntVar(&storyInstallment, "installment", 0, "Specific installment number to (re)generate. 0 = next pending.")
 	cmd.Flags().StringVar(&storyNarrator, "narrator", "am_fenrir", "Kokoro voice id for the narrator.")
 	cmd.Flags().StringVar(&storyPublishTo, "publish-to", "", "Directory to copy the finished episode.m4b into.")
-	cmd.Flags().IntVar(&storyCandidates, "candidates", 1, "Generate N outline candidates, score them, and write from the best. 1 = no rerank.")
+	cmd.Flags().IntVar(&storyBestOf, "best-of", 1, "Generate the prose N times and ship the lowest-badness convergence (narration runs once, on the winner). 1 = single pass.")
 	return cmd
 }
 
@@ -173,7 +176,7 @@ func novelCommand() *cobra.Command {
 		targetChapters int
 		narrator       string
 		publishTo      string
-		candidates     int
+		bestOf         int
 	)
 	cmd := &cobra.Command{
 		Use:   "novel <slug>",
@@ -199,9 +202,9 @@ concatenated into a single book.m4b.`,
 			if slug == "" {
 				return fmt.Errorf("world slug required (positional arg or --slug)")
 			}
-			// generateInstallment reads the package-level candidate
+			// generateInstallment reads the package-level best-of
 			// count; honour novel's own flag.
-			storyCandidates = candidates
+			storyBestOf = bestOf
 			return runNovel(cmd, slug, targetChapters, narrator, publishTo)
 		},
 	}
@@ -209,7 +212,7 @@ concatenated into a single book.m4b.`,
 	cmd.Flags().IntVar(&targetChapters, "target-chapters", 0, "Max chapters to generate this run (0 = all in arc.json).")
 	cmd.Flags().StringVar(&narrator, "narrator", "am_fenrir", "Kokoro voice id for the narrator.")
 	cmd.Flags().StringVar(&publishTo, "publish-to", "", "Directory to copy the finished book.m4b into.")
-	cmd.Flags().IntVar(&candidates, "candidates", 1, "Per-chapter outline candidates to score and pick from. 1 = no rerank.")
+	cmd.Flags().IntVar(&bestOf, "best-of", 1, "Per-chapter prose attempts; ships the lowest-badness convergence (narration runs once, on the winner). 1 = single pass.")
 	return cmd
 }
 
@@ -321,7 +324,12 @@ func assembleBook(cmd *cobra.Command, layout world.Layout, count int) (string, e
 	if len(paths) == 0 {
 		return "", fmt.Errorf("no chapter m4bs found to assemble")
 	}
-	listPath := filepath.Join(layout.Root, "book_concat.txt")
+	tmp, err := os.MkdirTemp("", "bookasm")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmp)
+	listPath := filepath.Join(tmp, "book_concat.txt")
 	var b strings.Builder
 	for _, p := range paths {
 		// ffmpeg concat list: single-quote the path, escaping any
@@ -1627,9 +1635,11 @@ func applyFixes(prosePath, spanfixPath, fogReportPath, outPath string) (int, err
 		if json.Unmarshal(dejson(fogRaw), &fog) == nil {
 			for _, f := range fog.Findings {
 				span := strings.TrimSpace(f.Span)
-				if strings.EqualFold(f.Severity, "LEAK") && span != "" && strings.Contains(s, span) {
-					s = strings.Replace(s, span, "", 1)
-					applied++
+				if strings.EqualFold(f.Severity, "LEAK") && span != "" {
+					if cut, ok := cutSpan(s, span); ok {
+						s = cut
+						applied++
+					}
 				}
 			}
 		}
@@ -1655,15 +1665,39 @@ func applyFixes(prosePath, spanfixPath, fogReportPath, outPath string) (int, err
 		}
 	}
 
-	// Cleanup after deletions: collapse the doubled spaces / blank lines a cut can leave.
-	s = strings.ReplaceAll(s, "  ", " ")
-	for strings.Contains(s, "\n\n\n") {
-		s = strings.ReplaceAll(s, "\n\n\n", "\n\n")
-	}
 	if err := os.WriteFile(outPath, []byte(s), 0o644); err != nil {
 		return 0, err
 	}
 	return applied, nil
+}
+
+// cutSpan removes the first occurrence of span from s and collapses only
+// the whitespace run the cut leaves at the splice site — never touching
+// intentional doubled spaces elsewhere in the prose (the old code ran a
+// document-wide ReplaceAll, silently rewriting the model's deliberate
+// spacing). Returns the result and whether the span was found.
+func cutSpan(s, span string) (string, bool) {
+	i := strings.Index(s, span)
+	if i < 0 {
+		return s, false
+	}
+	before := s[:i]
+	after := s[i+len(span):]
+	// Trim the trailing whitespace run on the left and the leading
+	// whitespace run on the right of the seam, then rejoin with a
+	// single space when both sides are non-empty and neither boundary
+	// is a paragraph break (so we don't glue sentences across blank
+	// lines or eat a leading/trailing edge).
+	leftTrim := strings.TrimRight(before, " \t")
+	rightTrim := strings.TrimLeft(after, " \t")
+	switch {
+	case leftTrim == "" || rightTrim == "":
+		return leftTrim + rightTrim, true
+	case strings.HasSuffix(leftTrim, "\n") || strings.HasPrefix(rightTrim, "\n"):
+		return leftTrim + rightTrim, true
+	default:
+		return leftTrim + " " + rightTrim, true
+	}
 }
 
 // verdictCount returns how many findings of the given severity ("LEAK", "BREAKING", …)
@@ -2199,9 +2233,13 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
+	// Keep the deferred Close only as a safety net; close explicitly
+	// so the final flush error (ENOSPC / broken NAS share on a
+	// publish target) surfaces instead of reporting a truncated copy
+	// as success.
 	defer out.Close()
 	if _, err := io.Copy(out, in); err != nil {
 		return err
 	}
-	return nil
+	return out.Close()
 }

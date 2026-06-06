@@ -76,8 +76,9 @@ or manage models itself. Before anything works you need:
     endpoint is expected at `http://127.0.0.1:9001`.
   - **`tts_kokoro`** — Kokoro-FastAPI narration TTS, expected at
     `http://127.0.0.1:8880` (needed by `story`, `novel`, `series`, `scene`).
-  - **`comfyui`** — ComfyUI for cover-art (SDXL) and short-video stills, expected
-    at `http://127.0.0.1:8188` (needed by `story`/`novel`/`series` covers and by
+  - **`comfyui`** — ComfyUI for cover-art (SDXL) and short-video generation
+    (Qwen-Image stills + Wan2.2 image-to-video), expected at
+    `http://127.0.0.1:8188` (needed by `story`/`novel`/`series` covers and by
     `scene`).
 - **`ffmpeg`** on `PATH` for audio mixing and stitching multi-chapter `.m4b`s
   (without it the per-chapter/per-installment files still stand on their own).
@@ -197,13 +198,14 @@ depth). You steer each piece with a **brief** you write and edit first.
 worldsmith brief my-world --steer "the cartographer is captured; introduce the Vault"
 #   → drafts briefs/NNN.md — EDIT IT, it's your direction document
 worldsmith story my-world                 # prose → narration → episode.m4b
-worldsmith story my-world --candidates 4  # generate 4 outlines, auto-pick the strongest
+worldsmith story my-world --best-of 4     # write the prose 4 times, ship the cleanest
 ```
 
 `story` flags: `--slug` (alternative to the positional arg), `--installment N`
 ((re)generate a specific number instead of the next pending one — useful for
 iterating on a draft), `--narrator <voice>` (Kokoro voice id, default
-`am_fenrir`), `--candidates N` (outline best-of-N, default `1` = no rerank), and
+`am_fenrir`), `--best-of N` (write the prose N times and ship the lowest-badness
+convergence; narration runs once, on the winner; default `1` = single pass), and
 `--publish-to <dir>` (below). `novel`, `series write`, and `scene` accept the
 same `--narrator` / `--publish-to`.
 
@@ -307,9 +309,9 @@ Most commands take the world slug as a positional arg or via `--slug`.
 | `expand <slug> [--seed ...] [--count N]` | Develop private notebook dossiers (staged proposals). |
 | `expand review <slug> [--accept-all] [--accept/--reject csv]` | Interactively (a/e/r/s/q) or non-interactively accept/reject staged dossiers. |
 | `brief <slug> [--steer ...] [--installment N] [--target-words N] [--force]` | Draft the next installment's direction document (you edit it). |
-| `story <slug> [--installment N] [--candidates N] [--narrator v] [--publish-to dir]` | Generate the next installment: prose → narration → episode.m4b. |
+| `story <slug> [--installment N] [--best-of N] [--narrator v] [--publish-to dir]` | Generate the next installment: prose → narration → episode.m4b. |
 | `arc <slug> [--premise ...] [--chapters N] [--force]` | Draft a novel's chapter spine (arc.json). |
-| `novel <slug> [--target-chapters N] [--candidates N] [--narrator v] [--publish-to dir]` | Render arc.json chapter-by-chapter, stitched into book.m4b. |
+| `novel <slug> [--target-chapters N] [--best-of N] [--narrator v] [--publish-to dir]` | Render arc.json chapter-by-chapter, stitched into book.m4b. |
 | `series plan <slug> [--force]` | Draft per-book chapter beats (arc.json) from a hand-authored series.json. |
 | `series write <slug> [--book N] [--chapters N] [--narrator v] [--publish-to dir]` | Generate the series' chapters → one chaptered .m4b per book. |
 | `scene <slug> [--shots N] [--format ...] [--narrator v] [--publish-to dir]` | Generate the next short-form vertical (1080×1920, captioned) video. |

@@ -224,9 +224,17 @@ func loadTimelineSplit(l Layout) (Timeline, error) {
 // hand, use SaveEvents to append proposed events to a specific file
 // of your choice, or merge + re-split manually.
 //
+// Guard: when the split-dir `timeline/` exists, LoadTimeline reads from
+// it and ignores the flat file, so a flat-file write would be silently
+// lost on the next load. SaveTimeline refuses that case with an explicit
+// error rather than dropping the mutation.
+//
 // Atomic via tmp-then-rename so a crash during write doesn't leave a
 // half-written timeline.json.
 func SaveTimeline(l Layout, t Timeline) error {
+	if info, err := os.Stat(l.TimelineDir()); err == nil && info.IsDir() {
+		return fmt.Errorf("timeline %q is in split-dir mode; SaveTimeline only writes the flat file — merge timeline/ to a flat timeline.json first", l.TimelineDir())
+	}
 	if err := os.MkdirAll(l.Root, 0o755); err != nil {
 		return err
 	}
@@ -349,10 +357,9 @@ type FilteredEvent struct {
 //     layer only), in which case true summary.
 //   - Tier=lost        → always dropped.
 //
-// An unrecognised tier defaults to common (safer than dropping —
-// surfaces the event with a note in the prompt about the missing
-// classification). Events with empty visibility tier are treated as
-// common.
+// An unrecognised tier is surfaced as a plain common-equivalent event
+// with no annotation (safer than dropping). Events with empty
+// visibility tier are likewise treated as common.
 //
 // Output ordering: by Year ascending, then by ID for ties (stable
 // against re-saves).

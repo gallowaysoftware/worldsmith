@@ -56,11 +56,11 @@ func MergeGeneratedTimeline(runDir string) (eras []EraAnchor, events []Event, er
 		} else {
 			events[i].Visibility = Visibility{Tier: TierCommon}
 		}
-		// Stamp source + (default-but-overridable) confidence.
+		// Stamp source and force proposed: these are machine
+		// proposals, so a model-supplied confidence:canon must not
+		// bypass the `timeline review` gate.
 		events[i].Source = "llm"
-		if events[i].Confidence == "" {
-			events[i].Confidence = ConfidenceProposed
-		}
+		events[i].Confidence = ConfidenceProposed
 	}
 	return eras, events, nil
 }

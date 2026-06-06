@@ -41,6 +41,9 @@ standard world dir, so every other worldsmith command works on it.`,
 			if worldgenTheme == "" {
 				return fmt.Errorf("--theme is required")
 			}
+			if worldgenSlug != "" && worldgenCount > 1 {
+				return fmt.Errorf("--slug cannot be combined with --count > 1 (it forces a single slug); drop one of them")
+			}
 			made := 0
 			for i := 0; i < worldgenCount; i++ {
 				slug, err := generateOneWorld(cmd, worldgenTheme)

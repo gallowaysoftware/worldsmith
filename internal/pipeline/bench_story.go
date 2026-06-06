@@ -1,7 +1,9 @@
 package pipeline
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/gallowaysoftware/vibe/vamp"
@@ -22,6 +24,7 @@ type BenchStoryConfig struct {
 	PriorsFile            string
 	BriefFile             string
 	HistoricalContextFile string
+	TargetWords           int
 }
 
 // BuildBenchStory constructs a stripped story pipeline for prose
@@ -35,6 +38,9 @@ type BenchStoryConfig struct {
 func BuildBenchStory(cfg BenchStoryConfig) (*vamp.Pipeline, error) {
 	if cfg.CanonRelevantFile == "" {
 		cfg.CanonRelevantFile = cfg.CanonFile
+	}
+	if cfg.TargetWords == 0 {
+		cfg.TargetWords = 10000
 	}
 	p := vamp.New("worldsmith-bench-story").
 		Describe("Prose-only run of the story pipeline (write + edit) for candidate-model A/B testing.")
@@ -53,6 +59,15 @@ func BuildBenchStory(cfg BenchStoryConfig) (*vamp.Pipeline, error) {
 		vamp.Describe("Path to this installment's brief.md."))
 	p.Input("historical_context_file", vamp.WithDefault(cfg.HistoricalContextFile),
 		vamp.Describe("Path to the pre-filtered timeline view."))
+	// outline_story / write_story reference these inputs in their
+	// templates; vibe renders with missingkey=error, so undeclared
+	// inputs fail the render. Mirror BuildStory/BuildOutline defaults.
+	p.Input("target_words", vamp.WithDefault(fmt.Sprintf("%d", cfg.TargetWords)),
+		vamp.Describe("Target installment word count for the outline."))
+	p.Input("notebook_file", vamp.WithDefault(os.DevNull),
+		vamp.Describe("Path to the world's private notebook (DevNull = none)."))
+	p.Input("licensed_reveals_file", vamp.WithDefault(os.DevNull),
+		vamp.Describe("Path to the licensed-reveals allow-list (DevNull = none)."))
 
 	p.RequireProfile("long_form")
 	p.RequireGPUMemory("~30GB during write_story + edit_story")
@@ -121,4 +136,4 @@ func BuildBenchStory(cfg BenchStoryConfig) (*vamp.Pipeline, error) {
 // ErrBenchOutputMissing is returned by the bench CLI when a candidate's
 // run dir doesn't contain story.md after the pipeline reportedly
 // succeeded.
-var ErrBenchOutputMissing = fmt.Errorf("bench candidate produced no story.md")
+var ErrBenchOutputMissing = errors.New("bench candidate produced no story.md")

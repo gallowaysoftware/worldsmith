@@ -18,8 +18,8 @@ import (
 
 // timelineCommand returns the `worldsmith timeline` umbrella with
 // list/show/add/review subcommands. The fifth subcommand,
-// `timeline generate`, lives next to it and is wired in when the
-// LLM-driven generation pipeline lands.
+// `timeline generate`, lives in timeline_generate.go and is registered
+// below.
 func timelineCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "timeline",
@@ -65,8 +65,7 @@ func timelineListCommand() *cobra.Command {
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "calendar: epoch=%q current_year=%d\n", t.Calendar.EpochLabel, t.Calendar.CurrentYear)
 			if len(t.Events) == 0 {
-				fmt.Fprintln(out, "no events yet — `worldsmith timeline add --slug",
-					slug, "` to author one, or `timeline generate` (when GPU is free).")
+				fmt.Fprintf(out, "no events yet — `worldsmith timeline add --slug %s` to author one, or `worldsmith timeline generate --slug %s` (when the GPU is free).\n", slug, slug)
 				return nil
 			}
 			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
@@ -172,9 +171,9 @@ func timelineAddCommand() *cobra.Command {
 		Short: "Append a hand-authored event to the world's timeline.",
 		Long: `add appends one event with source=human + confidence=canon. The
 event ID is auto-generated (evt_NNNN, next available) when --id is
-omitted. Required flags: --year, --kind, --summary. Most flags can
-also be left out and answered via stdin if you prefer interactive
-prompts.
+omitted. Provide --kind and --summary (prompted on stdin if omitted);
+--year defaults to the calendar's current year. Most flags can also be
+left out and answered via stdin if you prefer interactive prompts.
 
 Tier defaults to "common". For regional events provide --region. For
 cloistered events provide --known-to (repeatable). For both, --rumour

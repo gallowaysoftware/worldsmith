@@ -94,9 +94,9 @@ type StoryConfig struct {
 	SkipNarration bool
 	// PreEdited, when true, makes edit_story a pass-through of the supplied
 	// DraftFile instead of an LLM rewrite — the draft is already edited (it
-	// came out of the verify-loop's polish_fix pass). Downstream stages still
-	// read .stages.edit_story.output, so narration/canon/checks run on the
-	// converged prose unchanged. Requires DraftFile.
+	// came out of the verify-loop's span-fix/applyFixes pass). Downstream
+	// stages still read .stages.edit_story.output, so narration/canon/checks
+	// run on the converged prose unchanged. Requires DraftFile.
 	PreEdited bool
 	// TargetWords sets the installment's target prose length, threaded to the
 	// outline's per-scene budgets. 0 = pipeline default (~10,000). The series
@@ -116,20 +116,36 @@ type StoryConfig struct {
 // BuildStory constructs the per-installment vamp pipeline for the
 // `worldsmith story` flow.
 //
-// Stages:
+// Stages (the live DAG; some are conditional on config):
 //
-//	write_story    (text)   → draft.md     — 5-8k word prose draft
-//	edit_story     (text)   → story.md     — quality pass
-//	canon_delta    (text)   → canon_delta.md — atomic facts the next
-//	                                          installment must know
-//	summarize      (text)   → summary.md   — short recap → priors_file
-//	continuity_check (text) → continuity_report.md — contradiction audit
-//	compose_cover  (text)   → cover_prompt.txt
+//	outline_story        → outline.json  — scene plan + per-scene budgets
+//	write_story          → draft.md      — prose draft; usually a
+//	                                       pre-authored DraftFile produced
+//	                                       per scene by generatePerSceneDraft,
+//	                                       not a single whole-installment pass
+//	expand_story         → draft.md      — optional length/depth expansion
+//	edit_story           → story.md      — quality/cut pass (pass-through
+//	                                       when PreEdited)
+//	prose_critique       → critique report (advisory)
+//	continuity_precheck  → pre-edit contradiction audit
+//	fog_precheck         → pre-edit fog-leak audit
+//	continuity_check     → continuity_report.md — terminal audit
+//	fog_check            → fog_report.md         — terminal leak audit
+//	canon_delta          → canon_delta.md — atomic facts the next
+//	                                        installment must know
+//	summarize            → summary.md     — short recap → priors_file
+//	reconcile_canon      → canon reconciliation pass
+//	compose_cover        → cover_prompt.txt
+//	number_paragraphs    → numbered prose for segment addressing
+//	showrunner           → script.json    — paragraph segments
+//	enumerate_segments   → per-segment narration manifest
+//	cast_voice (foreach) → audio/seg_NNN.wav
+//	compose_mix_script   → mix_script.json
 //	generate_cover (comfyui) → cover.png
-//	showrunner     (text/json) → script.json — paragraph segments
-//	cast_voice     (audio foreach) → audio/seg_NNN.wav
-//	compose_mix    (render) → mix_script.json
-//	mix_episode    (mix)    → episode.m4b
+//	mix_episode          → episode.m4b
+//
+// SkipNarration stops after the terminal checks (no narration/canon/
+// finalize) for the verify-loop.
 //
 // Inputs threaded through prompts: world_file, characters_file,
 // canon_file, priors_file, brief_file (all paths the prompts'
@@ -657,90 +673,6 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 		Metadata("genre", "Audiobook").
 		Metadata("track", fmt.Sprintf("%d", cfg.InstallmentNumber)).
 		Output("episode.m4b")
-
-	return p.Build()
-}
-
-// PolishFixConfig drives one targeted fix pass in the verify-loop. It reads the
-// current prose plus the terminal continuity and fog reports and rewrites ONLY the
-// flagged spans, length-preserving — the narrow, reliable alternative to asking the
-// omnibus edit pass to catch everything. The CLI runs it between a check and a
-// re-check, looping until the prose is clean (or a cap is hit).
-type PolishFixConfig struct {
-	ProseFile            string
-	FogReportFile        string
-	ContinuityReportFile string
-	WorldFile            string
-	CharactersFile       string
-	CanonFile            string
-	NotebookFile         string
-	LicensedRevealsFile  string
-	BriefFile            string
-	// OutputName is the rendered prose filename in the run-dir; defaults to
-	// "polished.md".
-	OutputName string
-}
-
-// BuildPolishFix constructs the one-stage pipeline that applies the flagged
-// continuity/fog fixes to the prose and nothing else.
-func BuildPolishFix(cfg PolishFixConfig) (*vamp.Pipeline, error) {
-	if cfg.OutputName == "" {
-		cfg.OutputName = "polished.md"
-	}
-	if cfg.NotebookFile == "" {
-		cfg.NotebookFile = os.DevNull
-	}
-	if cfg.LicensedRevealsFile == "" {
-		cfg.LicensedRevealsFile = os.DevNull
-	}
-	if cfg.CanonFile == "" {
-		cfg.CanonFile = os.DevNull
-	}
-
-	p := vamp.New("worldsmith-polish-fix").
-		Describe("Apply only the flagged continuity/fog fixes to the prose, length-preserving.")
-
-	p.Input("prose_file", vamp.Required(), vamp.WithDefault(cfg.ProseFile),
-		vamp.Describe("Path to the current prose to fix."))
-	p.Input("fog_report_file", vamp.WithDefault(cfg.FogReportFile),
-		vamp.Describe("Path to fog_report.md (the leaks to un-name)."))
-	p.Input("continuity_report_file", vamp.WithDefault(cfg.ContinuityReportFile),
-		vamp.Describe("Path to continuity_report.md (the contradictions to fix)."))
-	p.Input("world_file", vamp.Required(), vamp.WithDefault(cfg.WorldFile),
-		vamp.Describe("Path to world.md."))
-	p.Input("characters_file", vamp.Required(), vamp.WithDefault(cfg.CharactersFile),
-		vamp.Describe("Path to characters.json."))
-	p.Input("canon_file", vamp.WithDefault(cfg.CanonFile),
-		vamp.Describe("Path to canon.md (the revealed-to-reader ledger)."))
-	p.Input("notebook_file", vamp.WithDefault(cfg.NotebookFile),
-		vamp.Describe("Path to the sealed author's notebook."))
-	p.Input("licensed_reveals_file", vamp.WithDefault(cfg.LicensedRevealsFile),
-		vamp.Describe("Path to the licensed-reveals allow-list."))
-	p.Input("brief_file", vamp.Required(), vamp.WithDefault(cfg.BriefFile),
-		vamp.Describe("Path to this installment's brief.md."))
-
-	p.RequireProfile("long_form")
-	p.CapabilityModel("long_form", vamp.ModelHint{
-		MinParams: "27B", MinContext: 131072,
-		SuggestedModel: "qwen3.6-27b-mtp-q6_k",
-	})
-
-	p.Text("polish_fix").
-		Capability("long_form").
-		PromptFS(PromptsFS, "polish_fix.md").
-		Output(cfg.OutputName).
-		Param("temperature", 0.3).
-		Param("max_tokens", 24576).
-		Param("chat_template_kwargs", map[string]any{"enable_thinking": false}).
-		Param("repetition_penalty", 1.1).
-		Param("presence_penalty", 0.3).
-		Param("min_p", 0.05).
-		Retry(&vamp.RetryPolicy{
-			MaxAttempts:    3,
-			InitialBackoff: 5 * time.Second,
-			MaxBackoff:     30 * time.Second,
-			RetryOn:        []string{"transient", "invalid_output"},
-		})
 
 	return p.Build()
 }

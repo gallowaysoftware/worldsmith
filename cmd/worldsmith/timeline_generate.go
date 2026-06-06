@@ -145,6 +145,9 @@ ensure-services preflight brings it up when this command runs).
 	cmd.Flags().StringVar(&slug, "slug", "", "World slug (required).")
 	cmd.Flags().StringVar(&runDir, "run-dir", "", "Override the per-run scratch dir. Default: $XDG_STATE_HOME/worldsmith/<slug>/timeline-gen/<ts>.")
 	cmd.Flags().BoolVar(&autoMerge, "auto-merge", false, "Reserved: currently a no-op (proposed events always land in timeline.json; canon promotion stays manual).")
+	// Hidden until it does something: a visible --auto-merge implies it
+	// auto-promotes to canon, which it does not.
+	_ = cmd.Flags().MarkHidden("auto-merge")
 	_ = cmd.MarkFlagRequired("slug")
 	return cmd
 }
