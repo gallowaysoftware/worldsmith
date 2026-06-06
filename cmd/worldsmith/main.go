@@ -174,6 +174,9 @@ Installment NNN.m4b".`,
 			if slug == "" {
 				return fmt.Errorf("world slug required (positional arg or --slug)")
 			}
+			if err := validateNarrator(storyNarrator); err != nil {
+				return err
+			}
 			return runStory(cmd, slug)
 		},
 	}
@@ -217,6 +220,9 @@ concatenated into a single book.m4b.`,
 			if slug == "" {
 				return fmt.Errorf("world slug required (positional arg or --slug)")
 			}
+			if err := validateNarrator(narrator); err != nil {
+				return err
+			}
 			// generateInstallment reads the package-level best-of
 			// count; honour novel's own flag.
 			storyBestOf = bestOf
@@ -255,6 +261,13 @@ func runNovel(cmd *cobra.Command, slug string, targetChapters int, narrator, pub
 			return err
 		}
 		return fmt.Errorf("no arc.json yet — wrote a stub at %s; fill in the chapter beats, then re-run `worldsmith novel %s`", layout.ArcFile(), slug)
+	}
+	// A series-mode arc.json (from `series plan`) nests its chapters under "books"
+	// and leaves the flat "chapters" empty. `novel` reads only the flat list, so it
+	// would otherwise silently treat a fully-planned series as an empty novel. Detect
+	// that shape and point the user at the right command instead of producing nothing.
+	if len(arc.Chapters) == 0 && len(arc.Books) > 0 {
+		return fmt.Errorf("arc.json at %s is a multi-book series (chapters are nested under \"books\") — use `worldsmith series write %s`, not `novel`", layout.ArcFile(), slug)
 	}
 	if len(arc.Chapters) == 0 {
 		return fmt.Errorf("arc.json at %s has no chapters — add entries under \"chapters\"", layout.ArcFile())
@@ -463,7 +476,7 @@ func runBrief(cmd *cobra.Command, slug string, installment int, steer string, ta
 		return fmt.Errorf("load timeline: %w", err)
 	}
 	histPath, err := world.WriteHistoricalContext(genDir, timeline.Events,
-		world.FilterOpts{YearCutoff: timeline.Calendar.CurrentYear})
+		world.FilterOpts{YearCutoff: timeline.Calendar.CurrentYear, HasCutoff: true})
 	if err != nil {
 		return fmt.Errorf("write historical context: %w", err)
 	}
@@ -797,6 +810,9 @@ func seriesWriteCommand() *cobra.Command {
 			}
 			if slug == "" {
 				return fmt.Errorf("world slug required (positional arg or --slug)")
+			}
+			if err := validateNarrator(narrator); err != nil {
+				return err
 			}
 			return runSeriesWrite(cmd, slug, book, chapterLimit, narrator, publishTo)
 		},
@@ -1355,10 +1371,12 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 	if err != nil {
 		return fmt.Errorf("ensure canon: %w", err)
 	}
-	// (Re)generating installment n: drop n's own prior canon section (and any later)
-	// so the writer reads a clean ledger, never a stale self-extraction from a scrapped
-	// run. Earlier installments' canon is kept. The post-run AppendCanonDelta re-adds
-	// n's fresh section.
+	// (Re)generating installment n: drop ONLY n's own prior canon section so the writer
+	// reads a clean ledger, never a stale self-extraction from a scrapped run. Every
+	// other installment's canon (earlier AND later) is kept — regenerating a single
+	// installment must not destroy canon the rest of the work depends on. The writer
+	// view is additionally scoped to "as of n" by WriteRelevantCanon; the post-run
+	// AppendCanonDelta re-inserts n's fresh section in order.
 	if err := world.TruncateCanonFrom(layout, n); err != nil {
 		return fmt.Errorf("truncate canon: %w", err)
 	}
@@ -1396,7 +1414,7 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 	// outgrows the budget. The outline + writer read this; canon_delta
 	// + continuity still read the full canon.
 	canonRelevantPath, err := world.WriteRelevantCanon(
-		installmentDir, canonPath, briefBody, brief.OnStageActors, world.DefaultCanonBudget)
+		installmentDir, canonPath, briefBody, brief.OnStageActors, world.DefaultCanonBudget, n)
 	if err != nil {
 		return fmt.Errorf("filter canon: %w", err)
 	}
@@ -1634,22 +1652,6 @@ var (
 	breakingRe = regexp.MustCompile(`(\d+)\s+breaking`)
 )
 
-// nonFindingRe matches a continuity/fog finding whose own `conflict` text talks itself
-// OUT of being a finding. The 27B checker, despite the prompt telling it to omit such
-// items, routinely deliberates in the conflict field and emits the result as a BREAKING
-// finding anyway — observed two findings in one run literally ending "...This is
-// consistent. No contradiction." Counting those as real breaks inflates the score with
-// pure noise and makes the verify-loop and best-of-N optimise against a phantom. So we
-// drop any finding that self-negates. (Matches only unambiguous non-finding markers; a
-// real break says "inconsistent with" / "contradicts", never "no contradiction".)
-var nonFindingRe = regexp.MustCompile(`(?i)\b(no contradiction|no conflict|not a contradiction|no violation|this is consistent|plausible world-?building)\b`)
-
-// isNonFinding reports whether a finding's conflict/fix text marks it as a non-finding
-// the checker should have omitted.
-func isNonFinding(conflict, fix string) bool {
-	return nonFindingRe.MatchString(conflict) || nonFindingRe.MatchString(fix)
-}
-
 // dejson strips a ```/```json fence (if present) off a check/spanfix report and returns
 // the inner JSON bytes.
 func dejson(raw []byte) []byte {
@@ -1792,7 +1794,7 @@ func verdictCount(path, severity string) int {
 				if reason == "" {
 					reason = f.Issue
 				}
-				if isNonFinding(reason, f.Fix) {
+				if world.IsNonFinding(reason, f.Fix) {
 					continue
 				}
 				n++
@@ -2291,6 +2293,19 @@ func sanitizeFilenameFragment(s string) string {
 }
 
 // copyFile streams src → dst with the system default buffer.
+// validateNarrator rejects an unknown --narrator voice BEFORE the expensive prose
+// pipeline runs. Unlike the per-shot voice path (which silently normalizes a
+// machine-generated voice_id), a user-typed narrator typo should fail fast and
+// loudly — otherwise the whole installment generates and only 400s at the TTS stage,
+// after all the LLM work is done.
+func validateNarrator(voice string) error {
+	if world.ValidVoice(voice) {
+		return nil
+	}
+	return fmt.Errorf("unknown narrator voice %q; valid voices: %s",
+		voice, strings.Join(world.KnownVoices(), ", "))
+}
+
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {

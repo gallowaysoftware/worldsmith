@@ -97,7 +97,7 @@ func TestWriteHistoricalContext(t *testing.T) {
 		{ID: "c", Year: 500, Kind: "future", Summary: "Should be filtered out",
 			Visibility: Visibility{Tier: TierCommon}, Confidence: ConfidenceCanon},
 	}
-	opts := FilterOpts{YearCutoff: 300, POVRegion: "marsh"}
+	opts := FilterOpts{YearCutoff: 300, HasCutoff: true, POVRegion: "marsh"}
 	path, err := WriteHistoricalContext(tmp, events, opts)
 	if err != nil {
 		t.Fatalf("WriteHistoricalContext: %v", err)

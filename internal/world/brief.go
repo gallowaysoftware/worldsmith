@@ -129,10 +129,10 @@ func splitFrontmatter(raw []byte) (BriefFront, string, error) {
 // caller doesn't have to remember the precedence rules:
 //
 //   - YearCutoff = Brief.YearOverride if set, else Calendar.CurrentYear.
-//     If both are zero the cutoff is also zero, which FilterEvents
-//     interprets as "no year filter" — caller may want to special-
-//     case that as "everything is the future, drop everything"
-//     instead, but that's a policy call.
+//     The cutoff always applies (HasCutoff is always true): the brief
+//     defines a narrative present, so events after it are the future
+//     and must be hidden — including the legitimate epoch-zero case
+//     where both YearOverride and CurrentYear are 0.
 //   - POVRegion = brief value verbatim.
 //   - OnStageActors = brief value verbatim.
 //   - IncludeProposed and IncludeSecret stay false (writer prompt
@@ -144,6 +144,7 @@ func FilterOptsFromBrief(brief BriefFront, cal Calendar) FilterOpts {
 	}
 	return FilterOpts{
 		YearCutoff:    year,
+		HasCutoff:     true,
 		POVRegion:     brief.POVRegion,
 		OnStageActors: brief.OnStageActors,
 	}

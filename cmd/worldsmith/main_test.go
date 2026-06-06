@@ -1,6 +1,22 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestValidateNarrator(t *testing.T) {
+	if err := validateNarrator("am_fenrir"); err != nil {
+		t.Errorf("known voice rejected: %v", err)
+	}
+	err := validateNarrator("am_fenfir") // common typo
+	if err == nil {
+		t.Fatal("typo'd narrator voice should be rejected early")
+	}
+	if !strings.Contains(err.Error(), "am_fenfir") {
+		t.Errorf("error should name the bad voice: %v", err)
+	}
+}
 
 func TestSanitizeFilenameFragment(t *testing.T) {
 	cases := []struct{ in, want string }{

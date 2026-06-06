@@ -298,9 +298,16 @@ func AppendProposedEvents(l Layout, fresh []Event) (added int, err error) {
 // filtered slice into the writer prompt.
 type FilterOpts struct {
 	// YearCutoff is the inclusive upper bound on event.Year — only
-	// events whose year is <= this value are returned. Set to the
-	// brief's year_override if present, else to Calendar.CurrentYear.
+	// events whose year is <= this value are returned (and only when
+	// HasCutoff is set). Set to the brief's year_override if present,
+	// else to Calendar.CurrentYear.
 	YearCutoff int
+
+	// HasCutoff distinguishes "no year filter" from "cut off at year
+	// zero". An epoch-zero calendar (CurrentYear == 0) is a legitimate
+	// narrative present whose future events must still be hidden, so we
+	// can't overload YearCutoff==0 to mean "no filter".
+	HasCutoff bool
 
 	// POVRegion is the region the installment is set in. Used to
 	// gate Tier=regional events; events from other regions surface
@@ -371,7 +378,7 @@ func FilterEvents(events []Event, opts FilterOpts) []FilteredEvent {
 	var out []FilteredEvent
 	for _, e := range events {
 		// Year cutoff: skip future events.
-		if opts.YearCutoff != 0 && e.Year > opts.YearCutoff {
+		if opts.HasCutoff && e.Year > opts.YearCutoff {
 			continue
 		}
 		// Confidence gate.

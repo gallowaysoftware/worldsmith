@@ -42,6 +42,11 @@ func TestCountFindingsJSON_FenceAndCounts(t *testing.T) {
 			raw:  "# Fog report\n\n**Verdict:** 1 leak, 0 watch\n",
 			ok:   false,
 		},
+		{
+			name: "json object without a findings key is not a findings doc",
+			raw:  `{"error":"model refused","reason":"context too long"}`,
+			ok:   false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -79,5 +84,45 @@ func TestContinuityScoreResult_FencedJSON(t *testing.T) {
 	}
 	if r.Score != 70 { // 100 - 30*1
 		t.Errorf("score = %d, want 70 (one breaking)", r.Score)
+	}
+}
+
+// A self-negating finding (one whose conflict text talks itself out of being a finding)
+// must be dropped by the scorecard, exactly as the verify-loop's verdictCount drops it,
+// so the shipped score tracks the same target the loop optimised against.
+func TestCountFindingsJSON_DropsSelfNegating(t *testing.T) {
+	raw := []byte(`{"findings":[
+		{"severity":"BREAKING","conflict":"contradicts the bible: the gate was sealed"},
+		{"severity":"BREAKING","conflict":"On reflection this is consistent. No contradiction."}
+	]}`)
+	got, ok := countFindingsJSON(raw)
+	if !ok {
+		t.Fatal("expected a parsed findings document")
+	}
+	if got["BREAKING"] != 1 {
+		t.Errorf("BREAKING = %d, want 1 (self-negating finding dropped); got %v", got["BREAKING"], got)
+	}
+}
+
+// A JSON object that isn't a findings document (e.g. an error blob) must not score a
+// false clean 100 — that would let a broken checker run masquerade as a perfect one.
+func TestScoreResult_NonFindingsJSONIsNotClean(t *testing.T) {
+	dir := t.TempDir()
+	blob := []byte(`{"error":"model produced no findings array"}`)
+
+	cont := filepath.Join(dir, "continuity_report.md")
+	if err := os.WriteFile(cont, blob, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := ContinuityScoreResult(cont); r.Score == 100 {
+		t.Errorf("non-findings JSON scored a false clean 100 for continuity: %q", r.Summary)
+	}
+
+	fog := filepath.Join(dir, "fog_report.md")
+	if err := os.WriteFile(fog, blob, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := FogScoreResult(fog); r.Score == 100 {
+		t.Errorf("non-findings JSON scored a false clean 100 for fog: %q", r.Summary)
 	}
 }

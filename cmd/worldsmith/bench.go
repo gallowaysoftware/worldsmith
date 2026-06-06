@@ -285,14 +285,49 @@ func capabilitiesPath() string {
 // backup buffer + returns a closure that restores it. The defer on
 // the bench command's RunE invokes this so even Ctrl-C / partial
 // failure leaves the file unchanged.
+//
+// The restore writes via temp-file + rename so an interrupt mid-restore
+// can't leave a truncated/clobbered capabilities.yaml: either the
+// original bytes land atomically or the file is left as the bench last
+// wrote it (still valid YAML, just pointing at a candidate).
 func snapshotCapabilities(path string) (func(), error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	return func() {
-		_ = os.WriteFile(path, raw, 0o644)
+		_ = atomicWriteFile(path, raw, 0o644)
 	}, nil
+}
+
+// atomicWriteFile writes data to path via a sibling temp file + rename,
+// so a crash/kill mid-write leaves either the old or new contents, never
+// a partial. The temp file shares path's directory so the rename stays
+// on one filesystem.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // writeCapabilitiesForCandidate rewrites capabilities.yaml's long_form
@@ -334,7 +369,7 @@ func writeCapabilitiesForCandidate(path, candidate string) error {
 	if !rewrote {
 		return fmt.Errorf("capabilities.yaml: didn't find a long_form.candidates line to rewrite")
 	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+	return atomicWriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
 func writeCipher(path string, entries []benchCipherEntry) error {

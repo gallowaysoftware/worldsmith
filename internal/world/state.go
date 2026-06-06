@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -258,13 +260,68 @@ func EnsurePriorsFile(l Layout, runDir string, upToButNotIncluding int) (string,
 	return path, nil
 }
 
-// TruncateCanonFrom removes installment n's previously-extracted canon section (and
-// everything after it) from canon.md, keeping earlier installments' canon intact. Call
-// it BEFORE (re)generating installment n so the writer never reads a stale
+var canonSectionRe = regexp.MustCompile(`(?im)^#{2}\s+From installment\s+(\d+)\b`)
+
+// canonSection is one "## From installment N" block of canon.md.
+type canonSection struct {
+	n    int
+	body string // verbatim text of the whole section, including its header line
+}
+
+// splitCanon parses canon.md into a leading preamble (anything before the first
+// "## From installment" header) and the per-installment sections in file order.
+func splitCanon(text string) (preamble string, sections []canonSection) {
+	locs := canonSectionRe.FindAllStringSubmatchIndex(text, -1)
+	if len(locs) == 0 {
+		return text, nil
+	}
+	preamble = text[:locs[0][0]]
+	for i, loc := range locs {
+		start := loc[0]
+		end := len(text)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		num, _ := strconv.Atoi(text[loc[2]:loc[3]])
+		sections = append(sections, canonSection{n: num, body: text[start:end]})
+	}
+	return preamble, sections
+}
+
+// renderCanonSections reassembles a preamble + sections into canon.md text, each
+// section separated by a blank line and trailing whitespace trimmed.
+func renderCanonSections(preamble string, sections []canonSection) string {
+	var b strings.Builder
+	if p := strings.TrimRight(preamble, "\n"); p != "" {
+		b.WriteString(p)
+		b.WriteString("\n")
+	}
+	for _, s := range sections {
+		body := strings.TrimRight(s.body, "\n")
+		if body == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(body)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// TruncateCanonFrom removes ONLY installment n's previously-extracted canon section
+// from canon.md, leaving every other installment's section (earlier AND later) intact.
+// Call it BEFORE (re)generating installment n so the writer never reads a stale
 // self-extraction — that's the source of cross-run contradictions (a ship or date
 // renamed between runs). No-op when the section isn't present.
+//
+// It used to cut from n's header to EOF on the theory that later installments build on
+// n and must be regenerated anyway. But `story --installment n` regenerates ONLY n, so
+// that blanket cut silently dropped the canon of every later, still-valid installment.
+// Removing just n's own section preserves their canon; AppendCanonDelta re-inserts n's
+// fresh section in order afterwards.
 func TruncateCanonFrom(l Layout, n int) error {
-	marker := fmt.Sprintf("## From installment %d\n", n)
 	b, err := os.ReadFile(l.CanonFile())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -272,23 +329,30 @@ func TruncateCanonFrom(l Layout, n int) error {
 		}
 		return err
 	}
-	text := string(b)
-	i := strings.Index(text, marker)
-	if i == -1 {
+	preamble, sections := splitCanon(string(b))
+	kept := sections[:0]
+	removed := false
+	for _, s := range sections {
+		if s.n == n {
+			removed = true
+			continue
+		}
+		kept = append(kept, s)
+	}
+	if !removed {
 		return nil
 	}
-	return os.WriteFile(l.CanonFile(), []byte(strings.TrimRight(text[:i], "\n")+"\n"), 0o644)
+	return os.WriteFile(l.CanonFile(), []byte(renderCanonSections(preamble, kept)), 0o644)
 }
 
-// AppendCanonDelta folds a freshly-finished installment's canon delta
-// into the running canon.md. It REPLACES rather than merely appends:
-// regenerating installment n drops n's previously-extracted section (and
-// anything after it) before installing the fresh delta. This is what makes
-// re-runs clean — the old behaviour (skip if the header already exists) kept
-// a stale delta extracted from now-replaced prose, which then contradicted
-// the new run (e.g. a ship renamed between runs). Because later installments
-// build on n, regenerating n invalidates them too, so cutting from n's header
-// to EOF is correct: regenerate the later ones to refill.
+// AppendCanonDelta folds a freshly-finished installment's canon delta into the running
+// canon.md. It REPLACES n's section in place rather than blindly appending: regenerating
+// installment n drops n's previously-extracted section before installing the fresh delta
+// at the same position (sections stay ordered by installment number). This keeps re-runs
+// clean — the old skip-if-present behaviour kept a stale delta from now-replaced prose,
+// which then contradicted the new run. Crucially it preserves the sections of OTHER
+// installments (including later ones), so regenerating a single installment never
+// destroys canon the rest of the work still depends on.
 func AppendCanonDelta(l Layout, n int) error {
 	delta, err := os.ReadFile(l.InstallmentFile(n, "canon_delta.md"))
 	if err != nil {
@@ -297,38 +361,34 @@ func AppendCanonDelta(l Layout, n int) error {
 		}
 		return err
 	}
-	// Trailing newline on the marker so "installment 1" can't prefix-match
-	// "installment 10".
-	marker := fmt.Sprintf("## From installment %d\n", n)
-	// A non-ENOENT read error here must abort: if we silently treat
-	// canon as empty we skip the replace-from-marker branch and
-	// double-append installment n's section — the exact contradiction
-	// this function exists to prevent.
+	// A non-ENOENT read error here must abort: silently treating canon as empty would
+	// drop every other installment's section.
 	existing, err := os.ReadFile(l.CanonFile())
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	text := string(existing)
-	if i := strings.Index(text, marker); i != -1 {
-		text = strings.TrimRight(text[:i], "\n") + "\n"
-		if err := os.WriteFile(l.CanonFile(), []byte(text), 0o644); err != nil {
-			return err
+	preamble, sections := splitCanon(string(existing))
+
+	newBody := fmt.Sprintf("## From installment %d\n\n%s", n, strings.TrimRight(string(delta), "\n"))
+	replaced := false
+	insertAt := len(sections)
+	for i := range sections {
+		if sections[i].n == n {
+			sections[i].body = newBody
+			replaced = true
+			break
+		}
+		if sections[i].n > n && insertAt == len(sections) {
+			insertAt = i
 		}
 	}
-	f, err := os.OpenFile(l.CanonFile(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
+	if !replaced {
+		sections = append(sections, canonSection{})
+		copy(sections[insertAt+1:], sections[insertAt:])
+		sections[insertAt] = canonSection{n: n, body: newBody}
 	}
-	defer f.Close()
-	if _, err := fmt.Fprintf(f, "\n## From installment %d\n\n", n); err != nil {
-		return err
-	}
-	// Close explicitly so a flush error (e.g. ENOSPC) on this durable
-	// cross-installment state surfaces instead of being lost in defer.
-	if _, err := f.Write(delta); err != nil {
-		return err
-	}
-	return f.Close()
+
+	return os.WriteFile(l.CanonFile(), []byte(renderCanonSections(preamble, sections)), 0o644)
 }
 
 // ScaffoldWorld writes stub files into a fresh world dir. Used by

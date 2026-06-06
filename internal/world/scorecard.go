@@ -26,17 +26,55 @@ func stripCodeFence(t []byte) []byte {
 	return bytes.TrimSpace(t)
 }
 
+// nonFindingRe matches a continuity/fog finding whose own conflict/fix text talks
+// itself OUT of being a finding. The 27B checker, despite the prompt telling it to omit
+// such items, routinely deliberates in the conflict field and emits the result as a
+// finding anyway (observed runs ending "...This is consistent. No contradiction.").
+// The verify-loop's verdictCount drops these from the optimization target, so the
+// scorecard must drop them too or the shipped score won't match what was optimised for.
+// (Matches only unambiguous non-finding markers; a real break says "contradicts" /
+// "inconsistent with", never "no contradiction".)
+var nonFindingRe = regexp.MustCompile(`(?i)\b(no contradiction|no conflict|not a contradiction|no violation|this is consistent|plausible world-?building)\b`)
+
+// IsNonFinding reports whether a finding's conflict/fix text marks it as a non-finding
+// the checker should have omitted. Shared by the scorecard and the cmd-side verify loop
+// so both drop the same self-negating noise.
+func IsNonFinding(conflict, fix string) bool {
+	return nonFindingRe.MatchString(conflict) || nonFindingRe.MatchString(fix)
+}
+
 // countFindingsJSON parses a JSON check report ({"findings":[{"severity":…}]}) into
-// per-severity counts (upper-cased). ok=false when the bytes aren't a JSON object, so
-// the caller falls back to the legacy markdown Verdict-line regex for old reports.
+// per-severity counts (upper-cased). ok=false when the bytes aren't a findings
+// document, so the caller falls back to the legacy markdown Verdict-line regex for
+// old reports.
+//
+// ok requires the object to actually carry a "findings" key: a validly-parsed JSON
+// object that ISN'T a findings report (e.g. an error blob the model emitted instead)
+// must NOT be scored as a clean zero-findings 100. We probe for the key first so an
+// empty findings array (a genuine CLEAN) stays distinct from "wrong document".
+//
+// Self-negating findings (see IsNonFinding) are skipped so the scorecard counts only
+// findings that survive the same drop the verify-loop applies — keeping the shipped
+// score aligned with the optimization target.
 func countFindingsJSON(raw []byte) (map[string]int, bool) {
 	t := stripCodeFence(bytes.TrimSpace(raw))
 	if len(t) == 0 || t[0] != '{' {
 		return nil, false
 	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(t, &probe); err != nil {
+		return nil, false
+	}
+	if _, ok := probe["findings"]; !ok {
+		// Valid JSON object, but not a findings document — don't pretend it's CLEAN.
+		return nil, false
+	}
 	var rep struct {
 		Findings []struct {
 			Severity string `json:"severity"`
+			Conflict string `json:"conflict"`
+			Issue    string `json:"issue"`
+			Fix      string `json:"fix"`
 		} `json:"findings"`
 	}
 	if err := json.Unmarshal(t, &rep); err != nil {
@@ -44,9 +82,29 @@ func countFindingsJSON(raw []byte) (map[string]int, bool) {
 	}
 	counts := map[string]int{}
 	for _, f := range rep.Findings {
+		reason := f.Conflict
+		if reason == "" {
+			reason = f.Issue
+		}
+		if IsNonFinding(reason, f.Fix) {
+			continue
+		}
 		counts[strings.ToUpper(strings.TrimSpace(f.Severity))]++
 	}
 	return counts, true
+}
+
+// isJSONObject reports whether raw (after fence-stripping) is a JSON object. Used to
+// tell "legacy markdown report" (regex fallback is appropriate, CLEAN default is
+// fine) apart from "a JSON object that wasn't a findings document" (the model emitted
+// the wrong shape — scoring it a clean 100 would be a lie).
+func isJSONObject(raw []byte) bool {
+	t := stripCodeFence(bytes.TrimSpace(raw))
+	if len(t) == 0 || t[0] != '{' {
+		return false
+	}
+	var probe map[string]json.RawMessage
+	return json.Unmarshal(t, &probe) == nil
 }
 
 // This file turns worldsmith's existing per-installment signals (the deterministic
@@ -141,6 +199,11 @@ func ContinuityScoreResult(reportPath string) contentkit.ScoreResult {
 			Summary:    fmt.Sprintf("%d breaking, %d minor, %d watch", breaking, minor, watch),
 		}
 	}
+	if isJSONObject(raw) {
+		// Parsed as JSON but lacked a "findings" key — the checker emitted the wrong
+		// shape. Don't reward that with a clean 100; flag it so it's visibly broken.
+		return contentkit.ScoreResult{Score: 0, Summary: "unrecognised continuity report (not a findings document)"}
+	}
 	text := string(raw)
 	if strings.Contains(strings.ToUpper(text), "VERDICT:") && strings.Contains(strings.ToUpper(text), "CLEAN") &&
 		!continuityVerdictRe.MatchString(text) {
@@ -196,6 +259,10 @@ func FogScoreResult(reportPath string) contentkit.ScoreResult {
 			Violations: v,
 			Summary:    fmt.Sprintf("%d leak, %d watch", leaks, watch),
 		}
+	}
+	if isJSONObject(raw) {
+		// Parsed as JSON but lacked a "findings" key — wrong shape, not a clean run.
+		return contentkit.ScoreResult{Score: 0, Summary: "unrecognised fog report (not a findings document)"}
 	}
 	mm := fogVerdictRe.FindStringSubmatch(string(raw))
 	if mm == nil {

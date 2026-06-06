@@ -213,12 +213,34 @@ func queryTokens(briefBody string) map[string]bool {
 	return q
 }
 
+// CanonAsOf returns the canon visible to installment n's writer: the preamble plus
+// every "## From installment K" section with K < n. It excludes n's own section (stale
+// self-extraction from a prior run) and every LATER installment's section (future facts
+// the writer must not see). The on-disk canon.md is left untouched — this is a read-time
+// view, so regenerating n never destroys later installments' canon.
+func CanonAsOf(canon string, n int) string {
+	preamble, sections := splitCanon(canon)
+	kept := sections[:0]
+	for _, s := range sections {
+		if s.n < n {
+			kept = append(kept, s)
+		}
+	}
+	if len(kept) == 0 && len(sections) == 0 {
+		// No section headers at all (legacy flat canon) — return verbatim.
+		return canon
+	}
+	return renderCanonSections(preamble, kept)
+}
+
 // WriteRelevantCanon computes the relevance-filtered canon for an
 // installment and writes it as canon_relevant.md into runDir, returning
-// the path. The full canon is read from canonPath. maxChars gates
-// filtering: at or under it, the file is a verbatim copy (so prompts
-// can read a single canon_relevant_file input in every case).
-func WriteRelevantCanon(runDir, canonPath, briefBody string, actors []string, maxChars int) (string, error) {
+// the path. The full canon is read from canonPath, then narrowed to the
+// view visible as of installment n (CanonAsOf) so the writer never sees
+// its own stale extraction or any later installment's facts. maxChars
+// gates filtering: at or under it, the file is a verbatim copy (so
+// prompts can read a single canon_relevant_file input in every case).
+func WriteRelevantCanon(runDir, canonPath, briefBody string, actors []string, maxChars, n int) (string, error) {
 	raw, err := os.ReadFile(canonPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -227,7 +249,7 @@ func WriteRelevantCanon(runDir, canonPath, briefBody string, actors []string, ma
 			return "", err
 		}
 	}
-	view := SelectRelevantCanon(string(raw), briefBody, actors, maxChars)
+	view := SelectRelevantCanon(CanonAsOf(string(raw), n), briefBody, actors, maxChars)
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return "", err
 	}

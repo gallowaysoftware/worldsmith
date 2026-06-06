@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -99,6 +100,24 @@ func NormalizeVoice(v string) string {
 		return strings.TrimSpace(v)
 	}
 	return NarratorVoice
+}
+
+// ValidVoice reports whether v is a known Kokoro voice id. Used to validate a
+// user-supplied --narrator EARLY (reject before running the prose pipeline) — unlike
+// NormalizeVoice, which silently substitutes a fallback for machine-generated voice_ids
+// where a typo shouldn't fail the whole render.
+func ValidVoice(v string) bool {
+	return validVoices[strings.TrimSpace(v)]
+}
+
+// KnownVoices returns the valid Kokoro voice ids in sorted order, for error messages.
+func KnownVoices() []string {
+	out := make([]string, 0, len(validVoices))
+	for v := range validVoices {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // charactersForFile is the on-disk characters.json shape (matches what the

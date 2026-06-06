@@ -187,9 +187,27 @@ func TestFilterEvents_YearCutoff(t *testing.T) {
 		makeEvent("b", 500, TierCommon),
 		makeEvent("c", 1000, TierCommon),
 	}
-	got := FilterEvents(events, FilterOpts{YearCutoff: 500})
+	got := FilterEvents(events, FilterOpts{YearCutoff: 500, HasCutoff: true})
 	if len(got) != 2 || got[0].Event.ID != "a" || got[1].Event.ID != "b" {
 		t.Errorf("year cutoff filter wrong: %+v", got)
+	}
+
+	// No cutoff requested: every year passes regardless of YearCutoff.
+	got = FilterEvents(events, FilterOpts{})
+	if len(got) != 3 {
+		t.Errorf("HasCutoff=false should not filter by year: %+v", got)
+	}
+
+	// Epoch-zero present: events after year 0 are the future and must
+	// be hidden. Previously YearCutoff==0 meant "no filter" and leaked
+	// them.
+	zero := []Event{
+		makeEvent("now", 0, TierCommon),
+		makeEvent("later", 1, TierCommon),
+	}
+	got = FilterEvents(zero, FilterOpts{YearCutoff: 0, HasCutoff: true})
+	if len(got) != 1 || got[0].Event.ID != "now" {
+		t.Errorf("epoch-zero cutoff should keep only year<=0: %+v", got)
 	}
 }
 
@@ -234,6 +252,7 @@ func TestFilterEvents_VisibilityTiers(t *testing.T) {
 	t.Run("writer prompt POV=veld with asha on stage", func(t *testing.T) {
 		got := FilterEvents(events, FilterOpts{
 			YearCutoff:    100,
+			HasCutoff:     true,
 			POVRegion:     "veld",
 			OnStageActors: []string{"asha"},
 		})
@@ -255,7 +274,7 @@ func TestFilterEvents_VisibilityTiers(t *testing.T) {
 	})
 
 	t.Run("writer prompt POV=marsh without asha", func(t *testing.T) {
-		got := FilterEvents(events, FilterOpts{YearCutoff: 100, POVRegion: "marsh"})
+		got := FilterEvents(events, FilterOpts{YearCutoff: 100, HasCutoff: true, POVRegion: "marsh"})
 		// Expected:
 		//  - common: true
 		//  - veld_only: rumour-only (POVRegion doesn't match, but rumour exists)

@@ -173,6 +173,9 @@ phase 1 (LLM) writes the shot list; phase 2 (ComfyUI + TTS) renders it.`,
 			if slug == "" {
 				return fmt.Errorf("world slug required (positional arg or --slug)")
 			}
+			if err := validateNarrator(sceneNarrator); err != nil {
+				return err
+			}
 			return runScene(cmd, slug)
 		},
 	}
