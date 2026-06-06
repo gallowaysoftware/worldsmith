@@ -92,6 +92,28 @@ func TestLoadTimeline_SplitDirWins(t *testing.T) {
 	}
 }
 
+func TestTimelineWritable_SplitDirRejected(t *testing.T) {
+	l := Layout{Root: t.TempDir()}
+	// Flat mode: writable.
+	if err := TimelineWritable(l); err != nil {
+		t.Errorf("flat timeline should be writable: %v", err)
+	}
+	// Split-dir mode: rejected, and SaveTimeline must agree (never flatten it).
+	if err := os.Mkdir(l.TimelineDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := TimelineWritable(l); err == nil {
+		t.Error("split-dir timeline should be reported non-writable")
+	}
+	if err := SaveTimeline(l, Timeline{Events: []Event{{ID: "x", Year: 1}}}); err == nil {
+		t.Error("SaveTimeline should refuse to flatten a split-dir timeline")
+	}
+	// The split dir must be untouched (no flat timeline.json written).
+	if _, err := os.Stat(l.TimelineFile()); !os.IsNotExist(err) {
+		t.Errorf("SaveTimeline wrote a flat file over a split-dir layout: %v", err)
+	}
+}
+
 func TestSaveTimeline_AtomicAndSorted(t *testing.T) {
 	root := t.TempDir()
 	l := Layout{Root: root}

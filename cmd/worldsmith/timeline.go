@@ -189,6 +189,11 @@ sets the publicly-told distortion that non-knowers see.`,
 				return err
 			}
 			defer unlock()
+			// Fail fast on a split-dir timeline so the user doesn't fill in an event
+			// (interactively, even) only to have the save rejected.
+			if err := world.TimelineWritable(l); err != nil {
+				return err
+			}
 			t, err := world.LoadTimeline(l)
 			if err != nil {
 				return err
@@ -305,6 +310,11 @@ func timelineReviewCommand() *cobra.Command {
 				return err
 			}
 			defer unlock()
+			// Fail fast on a split-dir timeline so the reviewer doesn't walk every
+			// proposed event before learning the result can't be saved.
+			if err := world.TimelineWritable(l); err != nil {
+				return err
+			}
 			t, err := world.LoadTimeline(l)
 			if err != nil {
 				return err
@@ -353,6 +363,16 @@ func timelineReviewCommand() *cobra.Command {
 					out2 = append(out2, edited)
 					accepted++
 				case "r":
+					// Reject permanently deletes the event, so confirm before the
+					// drop — a mistyped 'r' shouldn't lose a proposal with no undo.
+					confirm := strings.ToLower(strings.TrimSpace(
+						prompt(rdr, out, "  permanently delete this event? [y/N] > ")))
+					if confirm != "y" && confirm != "yes" {
+						fmt.Fprintln(out, "  cancelled — keeping as proposed")
+						out2 = append(out2, e)
+						skipped++
+						continue
+					}
 					rejected++
 					// drop — don't append
 				case "s":
@@ -370,7 +390,18 @@ func timelineReviewCommand() *cobra.Command {
 			}
 			t.Events = out2
 			if err := world.SaveTimeline(l, t); err != nil {
-				return err
+				// The whole review walk is in t now; a save failure would otherwise
+				// throw it away. Dump it next to the timeline so the decisions can be
+				// recovered (move it into place once the cause is fixed).
+				recovery := l.TimelineFile() + ".review-recovery.json"
+				if raw, mErr := json.MarshalIndent(t, "", "  "); mErr == nil {
+					if wErr := os.WriteFile(recovery, raw, 0o644); wErr == nil {
+						fmt.Fprintf(cmd.ErrOrStderr(),
+							"save failed; your review decisions were written to %s — move it to %s once the cause is fixed\n",
+							recovery, l.TimelineFile())
+					}
+				}
+				return fmt.Errorf("save timeline after review: %w", err)
 			}
 			fmt.Fprintf(out, "\ndone. accepted=%d rejected=%d skipped=%d\n", accepted, rejected, skipped)
 			return nil

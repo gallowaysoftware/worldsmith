@@ -798,11 +798,21 @@ func runSeriesPlan(cmd *cobra.Command, slug string, force bool) error {
 
 func seriesWriteCommand() *cobra.Command {
 	var slug, narrator, publishTo string
-	var book, chapterLimit int
+	var book, targetChapters, chaptersDeprecated int
 	cmd := &cobra.Command{
 		Use:   "write <slug>",
 		Short: "Generate the series' chapters and assemble a chaptered .m4b per book.",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `write generates the planned chapters of a series from arc.json, in order,
+assembling a chaptered .m4b per book.
+
+--target-chapters caps how many chapters to generate this run within the
+selected book (0 = all) — useful for slice tests. (The old name --chapters
+still works as a hidden alias.)
+
+--best-of N generates each chapter's prose N times and ships the
+lowest-badness convergence (the fog/continuity verify-loop scores each
+attempt); narration runs once, on the winner. 1 = single pass.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				slug = args[0]
@@ -813,12 +823,21 @@ func seriesWriteCommand() *cobra.Command {
 			if err := validateNarrator(narrator); err != nil {
 				return err
 			}
-			return runSeriesWrite(cmd, slug, book, chapterLimit, narrator, publishTo)
+			// Honour the deprecated --chapters when the user set it and didn't also
+			// pass the canonical --target-chapters.
+			if cmd.Flags().Changed("chapters") && !cmd.Flags().Changed("target-chapters") {
+				targetChapters = chaptersDeprecated
+			}
+			return runSeriesWrite(cmd, slug, book, targetChapters, narrator, publishTo)
 		},
 	}
 	cmd.Flags().StringVar(&slug, "slug", "", "World slug (alternative to positional arg).")
 	cmd.Flags().IntVar(&book, "book", 0, "Only generate this book number (0 = all books).")
-	cmd.Flags().IntVar(&chapterLimit, "chapters", 0, "Cap chapters generated this run within the selected book (0 = all). For slice tests.")
+	cmd.Flags().IntVar(&targetChapters, "target-chapters", 0, "Cap chapters generated this run within the selected book (0 = all). For slice tests.")
+	// Deprecated alias for --target-chapters; kept working but hidden so existing
+	// scripts don't break while the name converges with `novel --target-chapters`.
+	cmd.Flags().IntVar(&chaptersDeprecated, "chapters", 0, "Deprecated alias for --target-chapters.")
+	_ = cmd.Flags().MarkHidden("chapters")
 	cmd.Flags().StringVar(&narrator, "narrator", "am_fenrir", "Kokoro narrator voice id.")
 	cmd.Flags().StringVar(&publishTo, "publish-to", "", "Directory to copy finished book .m4b files into.")
 	cmd.Flags().IntVar(&storyBestOf, "best-of", 1, "Generate each chapter's prose N times and ship the lowest-badness convergence (narration runs once, on the winner). 1 = single pass.")

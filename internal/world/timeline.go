@@ -231,9 +231,20 @@ func loadTimelineSplit(l Layout) (Timeline, error) {
 //
 // Atomic via tmp-then-rename so a crash during write doesn't leave a
 // half-written timeline.json.
-func SaveTimeline(l Layout, t Timeline) error {
+// TimelineWritable reports whether SaveTimeline can persist to this world. It returns a
+// descriptive error when the timeline is in split-dir mode (a timeline/ directory),
+// which SaveTimeline refuses to flatten. Call it BEFORE an interactive edit (review/add)
+// so the user isn't told their work can't be saved only after doing all of it.
+func TimelineWritable(l Layout) error {
 	if info, err := os.Stat(l.TimelineDir()); err == nil && info.IsDir() {
 		return fmt.Errorf("timeline %q is in split-dir mode; SaveTimeline only writes the flat file — merge timeline/ to a flat timeline.json first", l.TimelineDir())
+	}
+	return nil
+}
+
+func SaveTimeline(l Layout, t Timeline) error {
+	if err := TimelineWritable(l); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(l.Root, 0o755); err != nil {
 		return err
