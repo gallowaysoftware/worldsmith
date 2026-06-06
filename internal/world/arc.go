@@ -84,6 +84,14 @@ type ArcBeat struct {
 	Beats       []string `json:"beats,omitempty"`
 	POV         string   `json:"pov,omitempty"`
 	Constraints []string `json:"constraints,omitempty"`
+	// Reveals is this chapter's reveal-license: the sealed material the chapter
+	// may put on the page (a SUBSET of its book's reveals, paced per chapter).
+	// A pointer so the renderer can tell "unset" (nil → inherit the whole book's
+	// reveals, the legacy behaviour) from "explicitly narrowed" (non-nil, even
+	// when empty — [] means this chapter licenses NOTHING and keeps all sealed
+	// material as subtext). Dumping the entire book license into every chapter
+	// over-licenses high-reveal chapters and lets the writer leak scale.
+	Reveals *[]string `json:"reveals,omitempty"`
 }
 
 // LoadArc reads + parses arc.json. Returns (zero, nil) when the file

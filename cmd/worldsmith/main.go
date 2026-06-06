@@ -836,7 +836,16 @@ func runSeriesWrite(cmd *cobra.Command, slug string, bookFilter, chapterLimit in
 			// both survive.
 			briefPath := layout.BriefFile(n)
 			if _, err := os.Stat(briefPath); os.IsNotExist(err) {
-				content := world.RenderSeriesChapterBrief(n, beat, r.book.Reveals, r.book.TargetWords)
+				// Per-chapter reveal pacing: a chapter that names its own reveals
+				// (even an empty list) overrides the book-wide license; only an unset
+				// (nil) chapter inherits the whole book's reveals. This stops a
+				// high-reveal chapter from being handed the entire book's sealed
+				// material and leaking scale it shouldn't show yet.
+				rev := r.book.Reveals
+				if beat.Reveals != nil {
+					rev = *beat.Reveals
+				}
+				content := world.RenderSeriesChapterBrief(n, beat, rev, r.book.TargetWords)
 				if err := os.WriteFile(briefPath, []byte(content), 0o644); err != nil {
 					return fmt.Errorf("write chapter %d brief: %w", n, err)
 				}
@@ -1108,7 +1117,7 @@ func spliceReplacements(prosePath, replacementsPath, outPath string) (int, error
 // keep the result only when measured style-badness drops. Bounded passes; returns
 // the path to the best prose (the input unchanged when nothing improved). Best-effort
 // — any failure ships the unpolished prose rather than breaking the chapter.
-func stylePolish(cmd *cobra.Command, layout world.Layout, n int, installmentDir, prosePath string) string {
+func stylePolish(cmd *cobra.Command, layout world.Layout, n int, installmentDir, prosePath, notebookFile, licensedRevealsFile string) string {
 	const maxPasses = 2
 	cur := prosePath
 	for pass := 1; pass <= maxPasses; pass++ {
@@ -1130,7 +1139,11 @@ func stylePolish(cmd *cobra.Command, layout world.Layout, n int, installmentDir,
 			return cur
 		}
 		if err := runPipeline(installmentDir, func() (*vamp.Pipeline, error) {
-			return pipeline.BuildProsePolish(pipeline.ProsePolishConfig{SpansFile: spansPath})
+			return pipeline.BuildProsePolish(pipeline.ProsePolishConfig{
+				SpansFile:           spansPath,
+				NotebookFile:        notebookFile,
+				LicensedRevealsFile: licensedRevealsFile,
+			})
 		}); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "style polish pass %d: %v (shipping unpolished)\n", pass, err)
 			return cur
@@ -1165,6 +1178,14 @@ func convergeProse(cmd *cobra.Command, layout world.Layout, n int, cfg pipeline.
 	if err != nil {
 		return "", 0, "", err
 	}
+	// Style-polish the stitched draft BEFORE the terminal checks + verify-loop. The
+	// per-scene writer ships slop/anaphora that nothing downstream fixes (edit_story is
+	// a pass-through in PreEdited mode), so recast the flagged sentences here — but do it
+	// FIRST, so the fog/continuity verify-loop below then runs on the polished prose and
+	// cuts any sealed-material leak a recast might introduce (recasting a sentence in
+	// isolation can turn an oblique line into an explicit reveal). Length-safe + kept
+	// only when measured style-badness drops.
+	draftFile = stylePolish(cmd, layout, n, installmentDir, draftFile, cfg.NotebookFile, cfg.LicensedRevealsFile)
 	cfg.DraftFile = draftFile
 	cfg.OutlineJSON = outlineJSON
 
@@ -1424,14 +1445,6 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 	if attempts > 1 {
 		fmt.Fprintf(cmd.OutOrStdout(), "best-of-%d: shipping the cleanest attempt (%d unresolved finding(s))\n", attempts, bestBad)
 	}
-
-	// Prose-style polish: the per-scene draft ships with no slop/anaphora cleanup
-	// (edit_story is a pass-through in PreEdited mode, and the verify-loop only fixes
-	// fog/continuity). Do a metrics-driven, length-safe pass here — recast only the
-	// flagged sentences (over-used openers, slop, not-X-but-Y) and splice them back —
-	// keeping the result only when measured style-badness actually drops. Runs with the
-	// LLM still resident, before the narration phase frees it.
-	bestConverged = stylePolish(cmd, layout, n, installmentDir, bestConverged)
 
 	// Phase 3: narrate + finalize on the BEST prose. Copy it to a stable file so the
 	// pipeline reads it as a DraftFile (PreEdited = no second rewrite). Phase 3 re-runs

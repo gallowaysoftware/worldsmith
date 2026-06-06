@@ -825,6 +825,12 @@ type ProsePolishConfig struct {
 	// SpansFile is the path to the JSON list of offending sentences
 	// ({"sentences":[{"span","reason"}]}) produced by world.OffendingSentences.
 	SpansFile string
+	// NotebookFile + LicensedRevealsFile give the pass the SAME fog-of-war
+	// context the writer has, so a recast can't turn an oblique line into a
+	// sealed-material leak (the failure mode without them). Empty/DevNull when
+	// the world has no notebook / nothing licensed.
+	NotebookFile        string
+	LicensedRevealsFile string
 	// OutputName is the rendered replacements filename; defaults to
 	// "prose_polish.json".
 	OutputName string
@@ -838,11 +844,21 @@ func BuildProsePolish(cfg ProsePolishConfig) (*vamp.Pipeline, error) {
 	if cfg.OutputName == "" {
 		cfg.OutputName = "prose_polish.json"
 	}
+	if cfg.NotebookFile == "" {
+		cfg.NotebookFile = os.DevNull
+	}
+	if cfg.LicensedRevealsFile == "" {
+		cfg.LicensedRevealsFile = os.DevNull
+	}
 	p := vamp.New("worldsmith-prose-polish").
-		Describe("Recast flagged sentences (repeated openers, slop, not-X-but-Y) without changing meaning or length.")
+		Describe("Recast flagged sentences (repeated openers, slop, not-X-but-Y) without changing meaning, length, or leaking sealed material.")
 
 	p.Input("spans_file", vamp.Required(), vamp.WithDefault(cfg.SpansFile),
 		vamp.Describe("Path to the JSON list of offending sentences ({sentences:[{span,reason}]})."))
+	p.Input("notebook_file", vamp.WithDefault(cfg.NotebookFile),
+		vamp.Describe("Path to the assembled author's notebook (sealed material; fog of war)."))
+	p.Input("licensed_reveals_file", vamp.WithDefault(cfg.LicensedRevealsFile),
+		vamp.Describe("Path to the licensed-reveals allow-list (sealed material the brief permits on the page)."))
 
 	p.RequireProfile("long_form")
 	p.CapabilityModel("long_form", vamp.ModelHint{
