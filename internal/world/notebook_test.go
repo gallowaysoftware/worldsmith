@@ -29,9 +29,26 @@ func TestDossierTitle(t *testing.T) {
 	if d.Title != "The Vault" {
 		t.Errorf("title parse: got %q want %q", d.Title, "The Vault")
 	}
+	// A first line that is not a heading is content, not a title — fall back
+	// to the slug rather than promoting the paragraph to a title.
 	d2 := stage(t, l, "2026-01-01T00-00-00", "no-heading", "just text, no heading\n")
-	if d2.Title != "just text, no heading" {
-		t.Errorf("fallback to first nonblank line: got %q", d2.Title)
+	if d2.Title != "no-heading" {
+		t.Errorf("non-heading first line should fall back to slug: got %q", d2.Title)
+	}
+	// A blockquote first line must not be mangled into a title.
+	d3 := stage(t, l, "2026-01-01T00-00-00", "quote-first", "> a quoted opening\n")
+	if d3.Title != "quote-first" {
+		t.Errorf("blockquote first line should fall back to slug: got %q", d3.Title)
+	}
+	// A plain heading without the "Thread:" prefix keeps its text.
+	d4 := stage(t, l, "2026-01-01T00-00-00", "plain-heading", "## The Sunken Archive\n")
+	if d4.Title != "The Sunken Archive" {
+		t.Errorf("plain heading should drop hashes only: got %q", d4.Title)
+	}
+	// A heading that is only hashes/whitespace falls back to the slug.
+	d5 := stage(t, l, "2026-01-01T00-00-00", "empty-heading", "###\n")
+	if d5.Title != "empty-heading" {
+		t.Errorf("empty heading should fall back to slug: got %q", d5.Title)
 	}
 }
 

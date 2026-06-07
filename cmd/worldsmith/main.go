@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -45,6 +46,11 @@ var (
 	storyNarrator    string
 	storyPublishTo   string
 	storyBestOf      int = 1
+	// regenForce gates the destructive regenerate path: clobbering an
+	// already-finished installment's episode.m4b and truncating its canon
+	// requires an explicit --force. novel/series set it via their own
+	// --force flags before calling into generateInstallment.
+	regenForce bool
 )
 
 func main() {
@@ -179,6 +185,7 @@ Installment NNN.m4b".`,
 			return runStory(cmd, slug)
 		},
 	}
+	cmd.Flags().BoolVar(&regenForce, "force", false, "Allow regenerating an installment whose episode.m4b already exists (overwrites it and truncates its canon).")
 	cmd.Flags().StringVar(&storySlug, "slug", "", "World slug (alternative to positional arg).")
 	cmd.Flags().IntVar(&storyInstallment, "installment", 0, "Specific installment number to (re)generate. 0 = next pending.")
 	cmd.Flags().StringVar(&storyNarrator, "narrator", "am_fenrir", "Kokoro voice id for the narrator.")
@@ -194,6 +201,7 @@ func novelCommand() *cobra.Command {
 		narrator       string
 		publishTo      string
 		bestOf         int
+		force          bool
 	)
 	cmd := &cobra.Command{
 		Use:   "novel <slug>",
@@ -225,6 +233,7 @@ concatenated into a single book.m4b.`,
 			// generateInstallment reads the package-level best-of
 			// count; honour novel's own flag.
 			storyBestOf = bestOf
+			regenForce = force
 			return runNovel(cmd, slug, targetChapters, narrator, publishTo)
 		},
 	}
@@ -233,6 +242,7 @@ concatenated into a single book.m4b.`,
 	cmd.Flags().StringVar(&narrator, "narrator", "am_fenrir", "Kokoro voice id for the narrator.")
 	cmd.Flags().StringVar(&publishTo, "publish-to", "", "Directory to copy the finished book.m4b into.")
 	cmd.Flags().IntVar(&bestOf, "best-of", 1, "Per-chapter prose attempts; ships the lowest-badness convergence (narration runs once, on the winner). 1 = single pass.")
+	cmd.Flags().BoolVar(&force, "force", false, "Regenerate chapters whose episode.m4b already exists (overwrites them and truncates their canon).")
 	return cmd
 }
 
@@ -285,8 +295,9 @@ func runNovel(cmd *cobra.Command, slug string, targetChapters int, narrator, pub
 	fmt.Fprintf(cmd.OutOrStdout(), "novel: %s (%d chapters)\n\n", fallbackStr(arc.Title, slug), count)
 
 	for i := 1; i <= count; i++ {
-		// Resume: a finished chapter already has its episode.m4b.
-		if _, err := os.Stat(layout.InstallmentFile(i, "episode.m4b")); err == nil {
+		// Resume: a finished chapter already has its episode.m4b. --force
+		// regenerates it instead of skipping.
+		if _, err := os.Stat(layout.InstallmentFile(i, "episode.m4b")); err == nil && !regenForce {
 			fmt.Fprintf(cmd.OutOrStdout(), "chapter %d: already done — skipping\n", i)
 			continue
 		}
@@ -315,6 +326,19 @@ func runNovel(cmd *cobra.Command, slug string, targetChapters int, narrator, pub
 	bookPath, err := assembleBook(cmd, layout, count)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "note: %v\n", err)
+		// A --publish-to user still expects audio out. With no book.m4b to
+		// copy, fall back to publishing the per-chapter episodes so the run
+		// doesn't exit zero with nothing delivered.
+		if publishTo != "" {
+			published, perr := publishChapters(cmd, layout, count, publishTo)
+			if perr != nil {
+				return perr
+			}
+			if published == 0 {
+				return fmt.Errorf("assemble book: %w", err)
+			}
+			return nil
+		}
 		return nil
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "\n✓ novel assembled: %s\n", bookPath)
@@ -799,6 +823,7 @@ func runSeriesPlan(cmd *cobra.Command, slug string, force bool) error {
 func seriesWriteCommand() *cobra.Command {
 	var slug, narrator, publishTo string
 	var book, targetChapters, chaptersDeprecated int
+	var force bool
 	cmd := &cobra.Command{
 		Use:   "write <slug>",
 		Short: "Generate the series' chapters and assemble a chaptered .m4b per book.",
@@ -828,6 +853,7 @@ attempt); narration runs once, on the winner. 1 = single pass.`,
 			if cmd.Flags().Changed("chapters") && !cmd.Flags().Changed("target-chapters") {
 				targetChapters = chaptersDeprecated
 			}
+			regenForce = force
 			return runSeriesWrite(cmd, slug, book, targetChapters, narrator, publishTo)
 		},
 	}
@@ -841,6 +867,7 @@ attempt); narration runs once, on the winner. 1 = single pass.`,
 	cmd.Flags().StringVar(&narrator, "narrator", "am_fenrir", "Kokoro narrator voice id.")
 	cmd.Flags().StringVar(&publishTo, "publish-to", "", "Directory to copy finished book .m4b files into.")
 	cmd.Flags().IntVar(&storyBestOf, "best-of", 1, "Generate each chapter's prose N times and ship the lowest-badness convergence (narration runs once, on the winner). 1 = single pass.")
+	cmd.Flags().BoolVar(&force, "force", false, "Regenerate chapters whose episode.m4b already exists (overwrites them and truncates their canon).")
 	return cmd
 }
 
@@ -885,7 +912,10 @@ func runSeriesWrite(cmd *cobra.Command, slug string, bookFilter, chapterLimit in
 	if !ok || len(arc.Books) == 0 {
 		return fmt.Errorf("no arc.json with books at %s — run `worldsmith series plan %s` first", layout.ArcFile(), slug)
 	}
-	series, _, _ := world.LoadSeries(layout) // optional, for book titles
+	series, _, serr := world.LoadSeries(layout) // optional, for book titles
+	if serr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: series.json did not parse (%v) — falling back to arc titles\n", serr)
+	}
 	flat := arc.FlatChapters()
 
 	// Compute each book's global chapter range [start..end] (1-based) by walking
@@ -937,8 +967,9 @@ func runSeriesWrite(cmd *cobra.Command, slug string, bookFilter, chapterLimit in
 					return fmt.Errorf("write chapter %d brief: %w", n, err)
 				}
 			}
-			// Resume: a finished chapter has its episode.m4b.
-			if _, err := os.Stat(layout.InstallmentFile(n, "episode.m4b")); err == nil {
+			// Resume: a finished chapter has its episode.m4b. --force
+			// regenerates it instead of skipping.
+			if _, err := os.Stat(layout.InstallmentFile(n, "episode.m4b")); err == nil && !regenForce {
 				fmt.Fprintf(out, "chapter %d (book %d): already done — skipping\n", n, r.book.N)
 				continue
 			}
@@ -1385,6 +1416,16 @@ func convergeProse(cmd *cobra.Command, layout world.Layout, n int, cfg pipeline.
 }
 
 func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrator string) error {
+	// Regenerating over a finished installment destroys its episode.m4b and
+	// truncates its canon section — both irreversible. Refuse unless the
+	// caller passed --force. The check precedes TruncateCanonFrom so a
+	// declined regen leaves the prior run fully intact.
+	if !regenForce {
+		if _, err := os.Stat(layout.InstallmentFile(n, "episode.m4b")); err == nil {
+			return fmt.Errorf("installment %d already finished at %s — pass --force to regenerate (overwrites the episode and truncates its canon)",
+				n, layout.InstallmentFile(n, "episode.m4b"))
+		}
+	}
 	canonPath, err := world.EnsureCanonFile(layout)
 	if err != nil {
 		return fmt.Errorf("ensure canon: %w", err)
@@ -1643,7 +1684,12 @@ func logVRAM(cmd *cobra.Command, label string) {
 // OOM downstream if VRAM is tight.
 func freeActiveLLM(cmd *cobra.Command, purpose string) {
 	fmt.Fprintf(cmd.OutOrStdout(), "freeing the LLM profile for %s (vibe stop)...\n", purpose)
-	c := exec.CommandContext(cmd.Context(), "vibe", "stop")
+	// Detach from cmd.Context(): freeing VRAM is the cleanup we want to run
+	// *because* of a Ctrl-C, so it must not inherit the cancelled context.
+	// A bounded timeout still prevents a hung `vibe stop` from blocking exit.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c := exec.CommandContext(ctx, "vibe", "stop")
 	c.Stdout = cmd.OutOrStdout()
 	c.Stderr = cmd.ErrOrStderr()
 	if err := c.Run(); err != nil {
@@ -1871,9 +1917,11 @@ func dropPhantomFindings(prose, reportPath string) int {
 	for _, f := range rep.Findings {
 		span, _ := f["span"].(string)
 		ns := normForMatch(span)
+		// Full-span containment only. A byte-prefix fallback (ns[:40]) could
+		// split a multibyte rune mid-sequence and miss a present span,
+		// dropping a real fog leak as a phantom.
 		present := len(ns) < 12 || // too short to judge confidently → keep
-			strings.Contains(prose, ns) ||
-			(len(ns) >= 40 && strings.Contains(prose, ns[:40]))
+			strings.Contains(prose, ns)
 		if present {
 			kept = append(kept, f)
 		} else {
@@ -1957,12 +2005,21 @@ func verifyContinuity(cmd *cobra.Command, layout world.Layout, n int, installmen
 	}
 
 	// Corpus the cited quote must actually appear in (so the model can't fabricate one).
+	// A REAL verdict is only kept when its quote occurs here, so an unreadable corpus
+	// would fail every quote check and drop even genuine findings. Bail when both reads
+	// fail (or the corpus is empty) and leave the findings untouched.
 	corpus := ""
-	if b, e := os.ReadFile(worldFile); e == nil {
-		corpus += normForMatch(string(b))
+	bw, ew := os.ReadFile(worldFile)
+	if ew == nil {
+		corpus += normForMatch(string(bw))
 	}
-	if b, e := os.ReadFile(canonFile); e == nil {
-		corpus += " " + normForMatch(string(b))
+	bc, ec := os.ReadFile(canonFile)
+	if ec == nil {
+		corpus += " " + normForMatch(string(bc))
+	}
+	if (ew != nil && ec != nil) || strings.TrimSpace(corpus) == "" {
+		fmt.Fprintln(cmd.ErrOrStderr(), "  continuity-verify skipped (could not read world.md/canon.md) — keeping unaudited findings")
+		return nil
 	}
 	verdictBySpan := map[string]struct {
 		verdict string
@@ -2148,6 +2205,25 @@ func publishEpisode(cmd *cobra.Command, layout world.Layout, n int, publishTo st
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "  published: %s\n", dst)
 	return nil
+}
+
+// publishChapters copies every finished per-chapter episode.m4b into
+// publishTo. Used as the fallback when book assembly fails (e.g. ffmpeg
+// is absent) but the user asked to publish — better to deliver the
+// chapters than to exit zero with nothing copied. Returns how many were
+// published.
+func publishChapters(cmd *cobra.Command, layout world.Layout, count int, publishTo string) (int, error) {
+	published := 0
+	for i := 1; i <= count; i++ {
+		if _, err := os.Stat(layout.InstallmentFile(i, "episode.m4b")); err != nil {
+			continue
+		}
+		if err := publishEpisode(cmd, layout, i, publishTo); err != nil {
+			return published, err
+		}
+		published++
+	}
+	return published, nil
 }
 
 // stubPipelineFactory returns a factory that builds the story

@@ -74,16 +74,19 @@ Output ONLY the brief markdown — no preamble, no commentary, no code
 fences. Follow the exemplar's structure when one was supplied;
 otherwise use exactly this shape:
 
-1. **YAML frontmatter** (only if you can sensibly infer it from canon
-   + timeline). Include the fields you are confident about:
+1. **YAML frontmatter.** Always emit the block with `target_words`
+   verbatim as below so the writer honours this installment's length;
+   add the optional fields only when you can sensibly infer them from
+   canon + timeline:
    ```
    ---
+   target_words: {{ .inputs.target_words }}
    year_override: <int, only for a flashback/forward set off the current year>
    pov_region: <region slug, if the installment is regionally scoped>
    on_stage_actors: [<actor slugs present this installment>]
    ---
    ```
-   Omit the whole block if none apply.
+   Keep `target_words`; omit any optional line that does not apply.
 
 2. **`# {{ .inputs.installment_number }} — <Title>`** — an H1 with the
    3-digit number and a real title (this becomes the published

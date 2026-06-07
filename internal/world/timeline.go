@@ -134,6 +134,18 @@ const (
 	TierLost       = "lost"
 )
 
+// ValidTier reports whether tier is a recognised visibility tier. The
+// empty string is accepted as the implicit common default. Callers
+// should normalise (trim + lowercase) before checking.
+func ValidTier(tier string) bool {
+	switch tier {
+	case "", TierCommon, TierRegional, TierCloistered, TierSecret, TierLost:
+		return true
+	default:
+		return false
+	}
+}
+
 const (
 	ConfidenceCanon    = "canon"
 	ConfidenceProposed = "proposed"
@@ -277,9 +289,28 @@ func SaveTimeline(l Layout, t Timeline) error {
 //
 // Used by the timeline-generation pipeline's final write step.
 func AppendProposedEvents(l Layout, fresh []Event) (added int, err error) {
+	return AppendGeneratedTimeline(l, nil, fresh)
+}
+
+// AppendGeneratedTimeline merges freshly-generated eras and events into
+// the timeline in a single load+save. Eras are additive (no overwrite of
+// an existing slug); events follow the same dedup/default-stamping rules
+// as AppendProposedEvents. Folding both into one save keeps a generate
+// run atomic — an interrupt can't leave new eras with no events.
+func AppendGeneratedTimeline(l Layout, eras []EraAnchor, fresh []Event) (added int, err error) {
 	t, err := LoadTimeline(l)
 	if err != nil {
 		return 0, err
+	}
+	existingEra := make(map[string]bool, len(t.Calendar.EraAnchors))
+	for _, e := range t.Calendar.EraAnchors {
+		existingEra[e.Slug] = true
+	}
+	for _, e := range eras {
+		if !existingEra[e.Slug] {
+			t.Calendar.EraAnchors = append(t.Calendar.EraAnchors, e)
+			existingEra[e.Slug] = true
+		}
 	}
 	existing := make(map[string]bool, len(t.Events))
 	for _, e := range t.Events {
@@ -404,7 +435,7 @@ func FilterEvents(events []Event, opts FilterOpts) []FilteredEvent {
 			// Unknown confidence value — drop to be safe.
 			continue
 		}
-		tier := e.Visibility.Tier
+		tier := strings.ToLower(strings.TrimSpace(e.Visibility.Tier))
 		if tier == "" {
 			tier = TierCommon
 		}
@@ -438,8 +469,9 @@ func FilterEvents(events []Event, opts FilterOpts) []FilteredEvent {
 				out = append(out, FilteredEvent{Event: e, RumourOnly: true})
 			}
 		default:
-			// Unknown tier: surface conservatively as common-equivalent.
-			out = append(out, FilteredEvent{Event: e})
+			// Unknown/typo'd tier: fail closed rather than leaking the
+			// true summary at an unintended reach.
+			continue
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {

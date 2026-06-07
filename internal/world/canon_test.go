@@ -58,6 +58,35 @@ func TestSelectRelevantCanon_FiltersLarge(t *testing.T) {
 	}
 }
 
+// When the forced-keep entries (world rules + on-stage actors) alone
+// exceed maxChars, they must still all be kept — the budget only gates
+// the score-only remainder. A premature break used to drop continuity
+// facts the function promises to preserve.
+func TestSelectRelevantCanon_ForcedKeepsExceedBudget(t *testing.T) {
+	canon := "## Rules\n" +
+		"- Salt-bound oaths bind the speaker until the next solstice and cannot be unmade by any mortal hand.\n" +
+		"- Iron rule: the deep roads stay sealed while the wardens sleep, no exception is ever granted.\n" +
+		"## People\n" +
+		"- Asha — the cartographer who walked from Vahn's Reach to the salt flats carrying the only true map.\n" +
+		"## Trivia\n" +
+		"- A wholly irrelevant pottery glaze note that should be droppable under budget pressure.\n"
+	// Budget smaller than the forced-keep bytes alone.
+	got := SelectRelevantCanon(canon, "Asha", []string{"Asha"}, 80)
+
+	if !strings.Contains(got, "Salt-bound oaths") {
+		t.Errorf("rule must be kept even past budget; got:\n%s", got)
+	}
+	if !strings.Contains(got, "Iron rule") {
+		t.Errorf("second rule must be kept even past budget; got:\n%s", got)
+	}
+	if !strings.Contains(got, "Asha") {
+		t.Errorf("on-stage actor must be kept even past budget; got:\n%s", got)
+	}
+	if strings.Contains(got, "pottery glaze") {
+		t.Errorf("score-only trivia should be dropped under a tight budget; got:\n%s", got)
+	}
+}
+
 func TestSelectRelevantCanon_PreservesHeaders(t *testing.T) {
 	canon := buildBigCanon()
 	got := SelectRelevantCanon(canon, "Asha cartography", []string{"Asha"}, 2000)

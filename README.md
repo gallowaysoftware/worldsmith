@@ -179,7 +179,7 @@ Everything is plain files you own — edit them directly whenever you like:
   overwritten).
 - **A brief** (per-installment direction): see below — you always edit briefs before
   generating.
-- **The timeline:** `worldsmith timeline review my-world` accepts/edits/rejects
+- **The timeline:** `worldsmith timeline review --slug my-world` accepts/edits/rejects
   proposed historical events the same `a/e/r/s/q` way; fog-of-war visibility tiers
   control which events surface to which stories.
 
@@ -261,9 +261,10 @@ worldsmith activate                           #    bring services up
 worldsmith expand concord --count 3           # 2. author deepens the universe
 worldsmith expand review concord              #    you accept/edit/reject the dossiers
 
-worldsmith brief concord --steer "..."        # 3. direct the next installment
-$EDITOR ~/.local/state/worldsmith/concord/briefs/001.md
-worldsmith story concord --publish-to ~/media/Concord/   #    write + narrate + publish
+$EDITOR ~/.local/state/worldsmith/concord/briefs/001.md   # 3. direct installment 001
+                                                          #    (init scaffolded this stub;
+                                                          #    `brief` drafts 002, 003, … later)
+worldsmith story concord --publish-to ~/media/Concord/    #    write + narrate + publish
 ```
 
 Each finished installment writes `summary.md` + `canon_delta.md` beside the m4b;

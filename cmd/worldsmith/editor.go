@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // resolveEditor picks the user's editor: $VISUAL, then $EDITOR, then vi.
@@ -24,7 +25,15 @@ func resolveEditor() string {
 // (e.g. `worldsmith brief edit`). The context lets a Ctrl-C
 // propagate to the editor instead of orphaning it.
 func newEditorCmd(ctx context.Context, editor, path string) *exec.Cmd {
-	c := exec.CommandContext(ctx, editor, path)
+	// $EDITOR/$VISUAL may carry arguments (e.g. "code --wait", "emacsclient
+	// -nw"). Running the whole string as the binary name would fail; split
+	// into the binary plus its leading args and append the path last.
+	fields := strings.Fields(editor)
+	if len(fields) == 0 {
+		fields = []string{"vi"}
+	}
+	args := append(fields[1:], path)
+	c := exec.CommandContext(ctx, fields[0], args...)
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr

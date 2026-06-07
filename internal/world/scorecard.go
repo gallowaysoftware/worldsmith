@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/gallowaysoftware/vibe/contentkit"
@@ -395,9 +396,26 @@ func ResultByAxis(card contentkit.Scorecard, axis string) contentkit.ScoreResult
 }
 
 func topSlop(hits map[string]int) string {
-	var parts []string
+	// Sort deterministically (count desc, term asc) so identical prose yields
+	// an identical excerpt — ranging the map directly made the scorecard
+	// diff noisy across runs.
+	type slopHit struct {
+		term  string
+		count int
+	}
+	ordered := make([]slopHit, 0, len(hits))
 	for k, c := range hits {
-		parts = append(parts, fmt.Sprintf("%s×%d", k, c))
+		ordered = append(ordered, slopHit{term: k, count: c})
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].count != ordered[j].count {
+			return ordered[i].count > ordered[j].count
+		}
+		return ordered[i].term < ordered[j].term
+	})
+	parts := make([]string, 0, len(ordered))
+	for _, h := range ordered {
+		parts = append(parts, fmt.Sprintf("%s×%d", h.term, h.count))
 	}
 	return strings.Join(parts, ", ")
 }

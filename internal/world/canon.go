@@ -108,15 +108,21 @@ func SelectRelevantCanon(canon, briefBody string, actors []string, maxChars int)
 	for _, i := range idx {
 		e := entries[i]
 		sz := len(strings.Join(e.lines, "\n")) + 1
-		if e.keep || e.score > 0 {
-			if !e.keep && sz > budget {
-				continue
-			}
+		if e.keep {
+			// Forced-keep continuity facts are always selected, even if
+			// they alone overrun the budget — dropping them would break the
+			// promise to preserve rules and on-stage actors.
 			chosen[i] = true
 			budget -= sz
+			continue
 		}
+		// Score-only entries fill whatever budget remains.
 		if budget <= 0 {
 			break
+		}
+		if e.score > 0 && sz <= budget {
+			chosen[i] = true
+			budget -= sz
 		}
 	}
 

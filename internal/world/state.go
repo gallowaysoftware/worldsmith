@@ -471,12 +471,18 @@ The hard ones the LLM needs to honor. Magic costs / tech limits / what's impossi
 }
 
 func charactersStub() string {
+	// voice_id is the field the casting/showrunner templates key on to pick a
+	// Kokoro voice; a hand-filled bible that only had a prose "voice" note would
+	// silently fall back to the narrator for all of this character's dialogue.
+	// voice_id_note lists the allowed ids since JSON can't carry a comment.
 	return `{
   "characters": [
     {
       "name": "<name>",
       "role": "<one-liner — protagonist, foil, mentor, hidden antagonist, etc.>",
-      "voice": "<how they sound on the page — terse, formal, anecdotal>",
+      "voice_id": "am_fenrir",
+      "voice_id_note": "Kokoro voice id for this character's dialogue. One of: am_fenrir, am_michael, am_puck, am_adam, am_eric, af_bella, af_nicole, bf_emma.",
+      "voice_note": "<how they sound on the page — terse, formal, anecdotal>",
       "want": "<what drives them>",
       "knows": ["<load-bearing piece of canon they're a vehicle for>"],
       "arc_hint": "<optional — where they're headed across the series>"

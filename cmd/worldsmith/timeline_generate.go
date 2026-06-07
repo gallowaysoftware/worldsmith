@@ -62,6 +62,11 @@ ensure-services preflight brings it up when this command runs).
 				return fmt.Errorf("world.md not found at %s — run `worldsmith init %s` first",
 					layout.WorldFile(), slug)
 			}
+			// Fail fast on a split-dir timeline so the multi-pass GPU run
+			// isn't spent before the merge save would be rejected.
+			if err := world.TimelineWritable(layout); err != nil {
+				return err
+			}
 
 			if runDir == "" {
 				runDir = filepath.Join(layout.Root, "timeline-gen",
@@ -119,26 +124,10 @@ ensure-services preflight brings it up when this command runs).
 			// Even without --auto-merge, we always persist the
 			// proposed events into the world's timeline.json so
 			// `timeline list --proposed` shows them. The review
-			// step is what promotes proposed→canon.
-			t, err := world.LoadTimeline(layout)
-			if err != nil {
-				return err
-			}
-			// Merge eras into Calendar.EraAnchors (additive, no
-			// overwrite of existing).
-			existingEra := make(map[string]bool, len(t.Calendar.EraAnchors))
-			for _, e := range t.Calendar.EraAnchors {
-				existingEra[e.Slug] = true
-			}
-			for _, e := range eras {
-				if !existingEra[e.Slug] {
-					t.Calendar.EraAnchors = append(t.Calendar.EraAnchors, e)
-				}
-			}
-			if err := world.SaveTimeline(layout, t); err != nil {
-				return fmt.Errorf("save calendar: %w", err)
-			}
-			added, err := world.AppendProposedEvents(layout, events)
+			// step is what promotes proposed→canon. Eras and events
+			// land in a single save so an interrupt can't leave new
+			// eras with no events.
+			added, err := world.AppendGeneratedTimeline(layout, eras, events)
 			if err != nil {
 				return fmt.Errorf("append proposed: %w", err)
 			}

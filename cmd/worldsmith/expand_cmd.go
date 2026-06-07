@@ -97,16 +97,26 @@ func runExpand(cmd *cobra.Command, slug, seed string, count int) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "auto-selecting and developing %d thread(s)...\n\n", count)
 	}
 
+	// The notebook corpus is identical across threads — nothing is accepted
+	// mid-run — so assemble it once and reuse the path each iteration instead
+	// of rewriting it N times. Keep it under .gen/ so ListStaged (which scans
+	// the staging dir's top level for *.md dossiers) never mistakes it for one.
+	genRoot := filepath.Join(stagingDir, ".gen")
+	if err := os.MkdirAll(genRoot, 0o755); err != nil {
+		return err
+	}
+	notebookPath, err := world.WriteAssembledNotebook(layout, genRoot)
+	if err != nil {
+		return fmt.Errorf("assemble notebook: %w", err)
+	}
+
 	var chosen []string
 	staged := 0
+	seen := map[string]bool{}
 	for i := 0; i < count; i++ {
 		genDir := filepath.Join(stagingDir, ".gen", fmt.Sprintf("%03d", i+1))
 		if err := os.MkdirAll(genDir, 0o755); err != nil {
 			return err
-		}
-		notebookPath, err := world.WriteAssembledNotebook(layout, genDir)
-		if err != nil {
-			return fmt.Errorf("assemble notebook: %w", err)
 		}
 		cfg := pipeline.ExpandConfig{
 			WorldFile:      layout.WorldFile(),
@@ -135,6 +145,12 @@ func runExpand(cmd *cobra.Command, slug, seed string, count int) error {
 		if dslug == "" {
 			dslug = fmt.Sprintf("thread-%03d", i+1)
 		}
+		// Two threads can sanitize to the same slug in one run; suffix the
+		// later one so it doesn't silently overwrite the earlier staged file.
+		if seen[dslug] {
+			dslug = fmt.Sprintf("%s-%03d", dslug, i+1)
+		}
+		seen[dslug] = true
 		dossier, err := os.ReadFile(filepath.Join(genDir, "dossier.md"))
 		if err != nil {
 			return fmt.Errorf("read dossier: %w", err)

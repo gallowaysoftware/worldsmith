@@ -55,9 +55,19 @@ func dossierTitle(path, fallback string) string {
 		if line == "" {
 			continue
 		}
-		line = strings.TrimLeft(line, "# ")
-		line = strings.TrimPrefix(line, "Thread:")
-		return strings.TrimSpace(line)
+		// Only a Markdown ATX heading names the dossier. A first line that
+		// is a blockquote, rule, or plain paragraph is content, not a title —
+		// the old `TrimLeft(line, "# ")` cutset mangled any line that merely
+		// began with '#' or a space. Anything else falls back to the slug.
+		if !strings.HasPrefix(line, "#") {
+			return fallback
+		}
+		title := strings.TrimSpace(strings.TrimLeft(line, "#"))
+		title = strings.TrimSpace(strings.TrimPrefix(title, "Thread:"))
+		if title == "" {
+			return fallback
+		}
+		return title
 	}
 	return fallback
 }

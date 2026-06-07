@@ -203,16 +203,25 @@ sets the publicly-told distortion that non-knowers see.`,
 			if interactive {
 				rdr := bufio.NewReader(os.Stdin)
 				if kind == "" {
-					kind = prompt(rdr, cmd.OutOrStdout(),
+					kind, err = prompt(rdr, cmd.OutOrStdout(),
 						"kind (war|founding|death|birth|treaty|discovery|...) > ")
+					if err != nil {
+						return fmt.Errorf("read kind: %w", err)
+					}
 				}
 				if summary == "" {
-					summary = prompt(rdr, cmd.OutOrStdout(),
+					summary, err = prompt(rdr, cmd.OutOrStdout(),
 						"summary (one sentence) > ")
+					if err != nil {
+						return fmt.Errorf("read summary: %w", err)
+					}
 				}
 				if year == 0 {
-					yearStr := prompt(rdr, cmd.OutOrStdout(),
+					yearStr, err := prompt(rdr, cmd.OutOrStdout(),
 						fmt.Sprintf("year [default current=%d] > ", t.Calendar.CurrentYear))
+					if err != nil {
+						return fmt.Errorf("read year: %w", err)
+					}
 					if yearStr == "" {
 						year = t.Calendar.CurrentYear
 					} else {
@@ -230,8 +239,12 @@ sets the publicly-told distortion that non-knowers see.`,
 			if kind == "" || summary == "" {
 				return fmt.Errorf("--kind and --summary are required")
 			}
+			tier = strings.ToLower(strings.TrimSpace(tier))
 			if tier == "" {
 				tier = world.TierCommon
+			}
+			if !world.ValidTier(tier) {
+				return fmt.Errorf("invalid --tier %q: want one of common|regional|cloistered|secret|lost", tier)
 			}
 			if scope == "" {
 				scope = "local"
@@ -345,9 +358,18 @@ func timelineReviewCommand() *cobra.Command {
 				}
 				seen++
 				fmt.Fprintf(out, "[%d/%d] %s\n", seen, pending, formatEvent(e))
-				answer := strings.ToLower(strings.TrimSpace(prompt(rdr, out, "  a/e/r/s/q > ")))
+				raw, perr := prompt(rdr, out, "  a/e/r/s/q > ")
+				if perr != nil {
+					// EOF / read error: don't let an empty line be read as
+					// "accept" and promote every remaining proposal. Keep the
+					// rest as proposed and stop here.
+					fmt.Fprintln(out, "\n  input closed — leaving remaining events as proposed")
+					out2 = append(out2, e)
+					break eventLoop
+				}
+				answer := strings.ToLower(strings.TrimSpace(raw))
 				switch answer {
-				case "a", "":
+				case "a":
 					e.Confidence = world.ConfidenceCanon
 					out2 = append(out2, e)
 					accepted++
@@ -365,8 +387,13 @@ func timelineReviewCommand() *cobra.Command {
 				case "r":
 					// Reject permanently deletes the event, so confirm before the
 					// drop — a mistyped 'r' shouldn't lose a proposal with no undo.
-					confirm := strings.ToLower(strings.TrimSpace(
-						prompt(rdr, out, "  permanently delete this event? [y/N] > ")))
+					rawc, cerr := prompt(rdr, out, "  permanently delete this event? [y/N] > ")
+					if cerr != nil {
+						fmt.Fprintln(out, "\n  input closed — keeping as proposed")
+						out2 = append(out2, e)
+						break eventLoop
+					}
+					confirm := strings.ToLower(strings.TrimSpace(rawc))
 					if confirm != "y" && confirm != "yes" {
 						fmt.Fprintln(out, "  cancelled — keeping as proposed")
 						out2 = append(out2, e)
@@ -493,11 +520,20 @@ func editEventInteractive(ctx context.Context, e world.Event) (world.Event, erro
 	if err := json.Unmarshal(updated, &out); err != nil {
 		return e, fmt.Errorf("parse edited JSON: %w", err)
 	}
+	// Guard against a typo'd tier slipping into canon, where FilterEvents
+	// would now drop it (fail-closed) rather than surfacing its summary.
+	if normalized := strings.ToLower(strings.TrimSpace(out.Visibility.Tier)); !world.ValidTier(normalized) {
+		return e, fmt.Errorf("invalid visibility tier %q: want one of common|regional|cloistered|secret|lost", out.Visibility.Tier)
+	}
 	return out, nil
 }
 
-func prompt(r *bufio.Reader, w io.Writer, label string) string {
+// prompt writes label and reads a line. It surfaces the read error
+// (including io.EOF) so callers can distinguish a deliberate empty
+// answer from a closed stdin — on EOF a blank string must not be
+// treated as a default "accept".
+func prompt(r *bufio.Reader, w io.Writer, label string) (string, error) {
 	fmt.Fprint(w, label)
-	line, _ := r.ReadString('\n')
-	return strings.TrimSpace(line)
+	line, err := r.ReadString('\n')
+	return strings.TrimSpace(line), err
 }
