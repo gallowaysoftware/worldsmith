@@ -670,8 +670,177 @@ canon/priors) is the same one 'story' and 'novel' use; series adds the
 book-level planning, per-book reveal-pacing, and chaptered-m4b assembly.`,
 	}
 	cmd.AddCommand(seriesPlanCommand())
+	cmd.AddCommand(seriesRevealsCommand())
 	cmd.AddCommand(seriesWriteCommand())
 	return cmd
+}
+
+func seriesRevealsCommand() *cobra.Command {
+	var slug string
+	var bookFilter int
+	cmd := &cobra.Command{
+		Use:   "reveals <slug>",
+		Short: "Let the LLM plan per-chapter reveal pacing into arc.json.",
+		Long: `reveals runs the reveal-pacing planner: for each book it reads the sealed
+notebook (the secrets), the book's reveal-license, and every chapter's beat, and
+decides the chapter where each secret should first reach the page — writing a
+per-chapter reveal-license into arc.json's chapters[].reveals. It paces the reveals
+so the writer gets a correct narrow license per chapter (instead of the whole book's
+secrets at once), which is what stops chapters leaking sealed material early.
+
+It overwrites the existing per-chapter reveals (arc.json is backed up first). Review
+the plan, tune any chapter, then run 'worldsmith series write'.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				slug = args[0]
+			}
+			if slug == "" {
+				return fmt.Errorf("world slug required (positional arg or --slug)")
+			}
+			return runSeriesReveals(cmd, slug, bookFilter)
+		},
+	}
+	cmd.Flags().StringVar(&slug, "slug", "", "World slug (alternative to positional arg).")
+	cmd.Flags().IntVar(&bookFilter, "book", 0, "Only plan this book number (0 = all books).")
+	return cmd
+}
+
+// renderBullets renders a string slice as a markdown bullet list (placeholder when empty).
+func renderBullets(items []string) string {
+	if len(items) == 0 {
+		return "(none)"
+	}
+	var b strings.Builder
+	for _, it := range items {
+		fmt.Fprintf(&b, "- %s\n", strings.TrimSpace(it))
+	}
+	return b.String()
+}
+
+// renderChaptersForPlanner formats a book's chapters (1-based local numbering) into the
+// beat summary the reveal planner reads.
+func renderChaptersForPlanner(chs []world.ArcBeat) string {
+	var b strings.Builder
+	for i, c := range chs {
+		fmt.Fprintf(&b, "## Chapter %d: %s\n", i+1, fallbackStr(c.Title, "untitled"))
+		if h := strings.TrimSpace(c.Hook); h != "" {
+			fmt.Fprintf(&b, "Hook: %s\n", h)
+		}
+		if c.POV != "" {
+			fmt.Fprintf(&b, "POV: %s\n", c.POV)
+		}
+		for _, beat := range c.Beats {
+			fmt.Fprintf(&b, "- %s\n", strings.TrimSpace(beat))
+		}
+		for _, con := range c.Constraints {
+			fmt.Fprintf(&b, "  [constraint] %s\n", strings.TrimSpace(con))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func runSeriesReveals(cmd *cobra.Command, slug string, bookFilter int) error {
+	out := cmd.OutOrStdout()
+	layout, err := world.Open(slug)
+	if err != nil {
+		return err
+	}
+	unlock, err := lockWorld(layout)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	arc, ok, err := world.LoadArc(layout)
+	if err != nil {
+		return err
+	}
+	if !ok || len(arc.Books) == 0 {
+		return fmt.Errorf("no arc.json with books at %s — run `worldsmith series plan %s` first", layout.ArcFile(), slug)
+	}
+	series, _, _ := world.LoadSeries(layout) // optional, for book titles
+	genDir := filepath.Join(layout.Root, ".gen-reveals")
+	if err := os.MkdirAll(genDir, 0o755); err != nil {
+		return err
+	}
+	notebookPath, err := world.WriteAssembledNotebook(layout, genDir)
+	if err != nil {
+		return fmt.Errorf("assemble notebook: %w", err)
+	}
+
+	planned := 0
+	for bi := range arc.Books {
+		b := &arc.Books[bi]
+		if bookFilter > 0 && b.N != bookFilter {
+			continue
+		}
+		fmt.Fprintf(out, "\n=== Book %d: %s — planning reveals for %d chapters ===\n",
+			b.N, fallbackStr(bookTitleOf(series, *b), "untitled"), len(b.Chapters))
+		cfg := pipeline.RevealPlanConfig{
+			WorldFile:        layout.WorldFile(),
+			NotebookFile:     notebookPath,
+			BookN:            b.N,
+			BookTitle:        bookTitleOf(series, *b),
+			BookReveals:      renderBullets(b.Reveals),
+			ChaptersRendered: renderChaptersForPlanner(b.Chapters),
+		}
+		if err := runPipeline(cmd, genDir, func() (*vamp.Pipeline, error) {
+			return pipeline.BuildRevealPlan(cfg)
+		}); err != nil {
+			return fmt.Errorf("book %d reveal plan: %w", b.N, err)
+		}
+		raw, err := os.ReadFile(filepath.Join(genDir, "reveal_plan.json"))
+		if err != nil {
+			return fmt.Errorf("read reveal plan: %w", err)
+		}
+		var plan struct {
+			Chapters []struct {
+				N       int      `json:"n"`
+				Reveals []string `json:"reveals"`
+			} `json:"chapters"`
+		}
+		if err := json.Unmarshal(world.StripJSONFence(raw), &plan); err != nil {
+			return fmt.Errorf("book %d: parse reveal plan: %w", b.N, err)
+		}
+		for _, pc := range plan.Chapters {
+			if pc.N < 1 || pc.N > len(b.Chapters) {
+				continue
+			}
+			revs := pc.Reveals
+			if revs == nil {
+				revs = []string{}
+			}
+			b.Chapters[pc.N-1].Reveals = &revs
+			tag := "sealed (subtext)"
+			if len(revs) > 0 {
+				tag = revs[0]
+				if len(tag) > 60 {
+					tag = tag[:60] + "…"
+				}
+			}
+			fmt.Fprintf(out, "  ch%d: %s\n", pc.N, tag)
+			planned++
+		}
+	}
+
+	// Back up arc.json, then write the reveal-paced version.
+	backup := layout.ArcFile() + ".bak." + time.Now().Format("2006-01-02T15-04-05")
+	if err := copyFile(layout.ArcFile(), backup); err != nil {
+		return fmt.Errorf("back up arc.json: %w", err)
+	}
+	fmt.Fprintf(out, "backed up arc.json → %s\n", backup)
+	enc, err := json.MarshalIndent(arc, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(layout.ArcFile(), append(enc, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write arc.json: %w", err)
+	}
+	fmt.Fprintf(out, "\n✓ planned reveals for %d chapter(s) → %s\n  review/tune, then: worldsmith series write %s\n",
+		planned, layout.ArcFile(), slug)
+	return nil
 }
 
 func seriesPlanCommand() *cobra.Command {
@@ -2089,28 +2258,11 @@ func applyFixes(prosePath, spanfixPath, fogReportPath, outPath string) (int, err
 	s := string(prose)
 	applied := 0
 
-	// 1. Cut fog LEAK spans.
-	if fogRaw, err := os.ReadFile(fogReportPath); err == nil {
-		var fog struct {
-			Findings []struct {
-				Severity string `json:"severity"`
-				Span     string `json:"span"`
-			} `json:"findings"`
-		}
-		if json.Unmarshal(world.StripJSONFence(fogRaw), &fog) == nil {
-			for _, f := range fog.Findings {
-				span := strings.TrimSpace(f.Span)
-				if strings.EqualFold(f.Severity, "LEAK") && span != "" {
-					if cut, ok := cutSpan(s, span); ok {
-						s = cut
-						applied++
-					}
-				}
-			}
-		}
-	}
-
-	// 2. Splice continuity rewrites.
+	// 1. Splice every span-fix rewrite — continuity contradictions AND fog leaks reworked
+	//    to subtext (span_fix.md now produces both). Track which spans the model addressed
+	//    so a fog leak it already reworked isn't also cut below. An empty replacement is a
+	//    deliberate cut.
+	reworked := map[string]bool{}
 	if raw, err := os.ReadFile(spanfixPath); err == nil {
 		var doc struct {
 			Replacements []struct {
@@ -2121,11 +2273,38 @@ func applyFixes(prosePath, spanfixPath, fogReportPath, outPath string) (int, err
 		if json.Unmarshal(world.StripJSONFence(raw), &doc) == nil {
 			for _, r := range doc.Replacements {
 				span := strings.TrimSpace(r.Span)
-				if span == "" || !strings.Contains(s, span) {
+				if span == "" {
+					continue
+				}
+				reworked[span] = true
+				if !strings.Contains(s, span) {
 					continue
 				}
 				s = strings.Replace(s, span, r.Replacement, 1)
 				applied++
+			}
+		}
+	}
+
+	// 2. Safety net: any fog LEAK the rework pass did NOT address gets cut outright — a
+	//    leak must never ship even if the model missed it. (Reworking is preferred; this
+	//    only catches the misses.)
+	if fogRaw, err := os.ReadFile(fogReportPath); err == nil {
+		var fog struct {
+			Findings []struct {
+				Severity string `json:"severity"`
+				Span     string `json:"span"`
+			} `json:"findings"`
+		}
+		if json.Unmarshal(world.StripJSONFence(fogRaw), &fog) == nil {
+			for _, f := range fog.Findings {
+				span := strings.TrimSpace(f.Span)
+				if strings.EqualFold(f.Severity, "LEAK") && span != "" && !reworked[span] {
+					if cut, ok := cutSpan(s, span); ok {
+						s = cut
+						applied++
+					}
+				}
 			}
 		}
 	}
