@@ -46,6 +46,10 @@ var (
 	storyNarrator    string
 	storyPublishTo   string
 	storyBestOf      int = 1
+	// seriesDraftOnly makes `series write` run phases A+B only (draft + self-eval
+	// scorecards), skipping narration/TTS/assembly — for iterating reveal pacing and
+	// prose quality without paying narration time on prose that will be regenerated.
+	seriesDraftOnly bool
 	// regenForce gates the destructive regenerate path: clobbering an
 	// already-finished installment's episode.m4b and truncating its canon
 	// requires an explicit --force. novel/series set it via their own
@@ -1037,6 +1041,7 @@ attempt); narration runs once, on the winner. 1 = single pass.`,
 	cmd.Flags().StringVar(&publishTo, "publish-to", "", "Directory to copy finished book .m4b files into.")
 	cmd.Flags().IntVar(&storyBestOf, "best-of", 1, "Generate each chapter's prose N times and ship the lowest-badness convergence (narration runs once, on the winner). 1 = single pass.")
 	cmd.Flags().BoolVar(&force, "force", false, "Regenerate chapters whose episode.m4b already exists (overwrites them and truncates their canon).")
+	cmd.Flags().BoolVar(&seriesDraftOnly, "draft-only", false, "Draft + self-evaluate chapters only (no narration/TTS/assembly) — for iterating pacing + prose quality.")
 	return cmd
 }
 
@@ -1196,6 +1201,13 @@ func runSeriesWrite(cmd *cobra.Command, slug string, bookFilter, chapterLimit in
 		if len(flagged) > 0 {
 			fmt.Fprintf(out, "\n⚠ book %d: chapters below %d after fixes: %v (narrated anyway — review these)\n",
 				r.book.N, qualityBar, flagged)
+		}
+
+		// Draft-only: stop after drafting + self-eval (no narration/assembly). Lets us
+		// iterate reveal pacing + prose quality cheaply, narrating only once it's clean.
+		if seriesDraftOnly {
+			fmt.Fprintf(out, "book %d: draft-only — drafted + scored %d chapters, skipping narration\n", r.book.N, genEnd-r.start+1)
+			continue
 		}
 
 		// === Phase C: narrate every drafted chapter (TTS + cover + mix) ===
@@ -1607,11 +1619,17 @@ func convergeProse(cmd *cobra.Command, layout world.Layout, n int, cfg pipeline.
 			return "", 0, "", fmt.Errorf("installment %d span-fix pass %d: %w", n, iter, err)
 		}
 		polishedName := fmt.Sprintf("polished_%d.md", iter)
+		// forceCutFog: cut every fog leak each pass — monotonic and reliable (the
+		// proven overnight behavior). Pure subtext-rework regressed fog scores (reworks
+		// re-leak / don't converge in bounded passes); cutting guarantees a leak can't
+		// ship. span_fix's continuity rewrites still splice. (Prose-preserving fog
+		// rework is shelved as a harder refinement — needs fog-weighted keep-best.)
 		applied, err := applyFixes(
 			prosePath,
 			layout.InstallmentFile(n, "spanfix.json"),
 			fogRpt,
 			layout.InstallmentFile(n, polishedName),
+			true,
 		)
 		if err != nil {
 			return "", 0, "", fmt.Errorf("installment %d apply-fixes pass %d: %w", n, iter, err)
@@ -2250,7 +2268,7 @@ var (
 // never sees the whole prose, so it can't lapse into copy-the-document. Spans that no
 // longer match verbatim are skipped (the loop's re-check catches any remainder). Returns
 // the number of fixes that landed.
-func applyFixes(prosePath, spanfixPath, fogReportPath, outPath string) (int, error) {
+func applyFixes(prosePath, spanfixPath, fogReportPath, outPath string, forceCutFog bool) (int, error) {
 	prose, err := os.ReadFile(prosePath)
 	if err != nil {
 		return 0, err
@@ -2258,10 +2276,31 @@ func applyFixes(prosePath, spanfixPath, fogReportPath, outPath string) (int, err
 	s := string(prose)
 	applied := 0
 
-	// 1. Splice every span-fix rewrite — continuity contradictions AND fog leaks reworked
-	//    to subtext (span_fix.md now produces both). Track which spans the model addressed
-	//    so a fog leak it already reworked isn't also cut below. An empty replacement is a
-	//    deliberate cut.
+	// Collect the fog LEAK spans up front so the splice step can tell a fog rework from a
+	// continuity rework, and the force-cut path can cut them all.
+	fogLeak := map[string]bool{}
+	if fogRaw, err := os.ReadFile(fogReportPath); err == nil {
+		var fog struct {
+			Findings []struct {
+				Severity string `json:"severity"`
+				Span     string `json:"span"`
+			} `json:"findings"`
+		}
+		if json.Unmarshal(world.StripJSONFence(fogRaw), &fog) == nil {
+			for _, f := range fog.Findings {
+				if strings.EqualFold(f.Severity, "LEAK") {
+					if span := strings.TrimSpace(f.Span); span != "" {
+						fogLeak[span] = true
+					}
+				}
+			}
+		}
+	}
+
+	// 1. Splice span-fix rewrites. Continuity rewrites always splice. Fog rewrites splice
+	//    too on rework passes (prose-preserving subtext), but on a force-cut pass we SKIP
+	//    fog reworks and cut those spans below instead — cutting is monotonic and can't
+	//    re-leak, the reliable guarantee for the final pass.
 	reworked := map[string]bool{}
 	if raw, err := os.ReadFile(spanfixPath); err == nil {
 		var doc struct {
@@ -2276,6 +2315,9 @@ func applyFixes(prosePath, spanfixPath, fogReportPath, outPath string) (int, err
 				if span == "" {
 					continue
 				}
+				if forceCutFog && fogLeak[span] {
+					continue // leave for the guaranteed cut below
+				}
 				reworked[span] = true
 				if !strings.Contains(s, span) {
 					continue
@@ -2286,17 +2328,16 @@ func applyFixes(prosePath, spanfixPath, fogReportPath, outPath string) (int, err
 		}
 	}
 
-	// 2. Safety net: any fog LEAK the rework pass did NOT address gets cut outright — a
-	//    leak must never ship even if the model missed it. (Reworking is preferred; this
-	//    only catches the misses.)
-	if fogRaw, err := os.ReadFile(fogReportPath); err == nil {
+	// 2. Cut fog LEAK spans. On a rework pass this is the safety net for leaks the rework
+	//    missed; on a force-cut pass it cuts EVERY remaining leak so none can ship.
+	{
 		var fog struct {
 			Findings []struct {
 				Severity string `json:"severity"`
 				Span     string `json:"span"`
 			} `json:"findings"`
 		}
-		if json.Unmarshal(world.StripJSONFence(fogRaw), &fog) == nil {
+		if fogRaw, err := os.ReadFile(fogReportPath); err == nil && json.Unmarshal(world.StripJSONFence(fogRaw), &fog) == nil {
 			for _, f := range fog.Findings {
 				span := strings.TrimSpace(f.Span)
 				if strings.EqualFold(f.Severity, "LEAK") && span != "" && !reworked[span] {

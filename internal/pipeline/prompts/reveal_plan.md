@@ -40,10 +40,36 @@ first time — and only those. Principles:
   scale behind it — that is a separate, later reveal.
 - **Honour-by-absence is absolute.** Anything the notebook marks NEVER / honour-by-absence
   is never licensed, in any chapter.
+- **A chapter's own `[constraint]` notes are BINDING.** They are the author's explicit
+  intent for what that chapter must withhold. NEVER license anything a chapter's
+  constraint says to keep sealed, keep implicit, or keep out of a POV's knowledge. If a
+  constraint says "do not reveal X to the reader yet" or "show it only through Y's
+  reaction" → that chapter does NOT license X (leave it sealed/subtext). If a constraint
+  says a POV "does not know" something → do not license a reveal that requires that POV to
+  know it. When a constraint and the book license seem to disagree, the constraint wins.
 
-Write each license as ONE concrete sentence that names exactly what may be stated AND what
-must still stay sealed (mirror the notebook's own wording). Cover every chapter number; a
-chapter that reveals nothing gets `"reveals": []`.
+Write each license as a BOUNDED instruction with TWO explicit halves — this is the most
+important rule, and the difference between a license that holds and one the writer escalates
+through:
+
+1. **May state:** the CORE that surfaces this chapter (one concrete thing).
+2. **Must still withhold:** the adjacent escalations the writer will be tempted to reach
+   for but that stay sealed — the scale, the count, the mechanism/methodology, the
+   heritability, the strategic consequence, the cohort, the wider program. Name them
+   explicitly so the writer knows the edge.
+
+A license that only says what MAY be revealed (without naming what must stay sealed) WILL
+leak — the writer dramatizes a personal reveal into its strategic implications. Always
+write both halves.
+
+Example of a properly bounded license (chapter where a captive realizes her situation):
+"MAY state: the captive's own realization that she is kept alive to be harvested and bred
+from, as biological stock — her personal status, in this room. MUST still withhold: that
+other captives/products or a bred cohort exist, any count or scale, that the trait is
+heritable or how the selection works, and the strategic war-consequence — all sealed for
+later."
+
+Cover every chapter number; a chapter that reveals nothing gets `"reveals": []`.
 
 # Output — JSON ONLY (first byte `{`, no prose, no commentary)
 
