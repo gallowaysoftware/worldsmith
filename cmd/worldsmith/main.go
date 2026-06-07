@@ -988,28 +988,37 @@ func runSeriesWrite(cmd *cobra.Command, slug string, bookFilter, chapterLimit in
 		}
 
 		// === Phase B: self-evaluating fix loop ===
-		// Re-draft any chapter below the bar — regeneration is the fix lever (fresh
-		// prose usually clears a stochastic continuity/fog flag). Continuity is the
-		// binding axis here: Overall = min(prose, continuity, fog), so overall >= bar
-		// already REQUIRES continuity >= bar. Bounded; stubborn chapters are flagged,
-		// not looped forever, and are narrated anyway so you have something to review.
-		// One round: a fresh sample sometimes clears a stochastic continuity flag, but
-		// re-rolling rarely fixes a fog leak (the writer re-leaks the same sealed
-		// material) — a second round mostly burns GPU. Stubborn chapters are flagged
-		// for a targeted fix (reveal-pacing), not re-rolled all night.
-		const maxFixRounds = 1
+		// Re-draft a chapter ONLY for a real, fixable deficiency — a continuity or fog
+		// score below the bar — never for a prose cap. Prose tops out around 78-80
+		// because the anaphora/trigram penalties always max out, so re-rolling a clean
+		// chapter can't lift it and only risks replacing good prose with worse. A fresh
+		// sample sometimes clears a stochastic continuity flag (fog leaks rarely clear —
+		// the writer re-leaks — so those get flagged for targeted reveal-pacing, not
+		// re-rolled all night). Keep-best is enforced ON DISK: snapshot the chapter's
+		// artifacts (prose, canon, scorecard) before the re-draft and roll back if it
+		// didn't improve, so Phase C always narrates the best version seen.
 		var flagged []int
 		for n := r.start; n <= genEnd; n++ {
-			for round := 1; scores[n] < qualityBar && round <= maxFixRounds; round++ {
-				fmt.Fprintf(out, "self-eval: chapter %d at %d/100 (<%d) — re-drafting (round %d/%d)\n",
-					n, scores[n], qualityBar, round, maxFixRounds)
-				sc, err := draftInstallment(cmd, layout, n, narrator)
-				if err != nil {
-					return fmt.Errorf("re-draft chapter %d: %w", n, err)
-				}
-				if sc > scores[n] {
-					scores[n] = sc
-				}
+			cont := readScorecardAxis(layout, n, "continuity")
+			fog := readScorecardAxis(layout, n, "fog")
+			if cont >= qualityBar && fog >= qualityBar {
+				continue // clean continuity + fog; any sub-bar overall is a prose cap — leave it
+			}
+			fmt.Fprintf(out, "self-eval: chapter %d at %d/100 (continuity %d, fog %d) — re-drafting once\n",
+				n, scores[n], cont, fog)
+			snapshotChapter(layout, n)
+			sc, err := draftInstallment(cmd, layout, n, narrator)
+			if err != nil {
+				// An interrupted re-draft can leave canon mid-truncation; roll back to
+				// the snapshot so a Ctrl-C / error never corrupts the chapter's canon.
+				restoreChapter(layout, n)
+				return fmt.Errorf("re-draft chapter %d: %w", n, err)
+			}
+			if sc > scores[n] {
+				scores[n] = sc // re-draft improved; keep it (already on disk)
+			} else {
+				restoreChapter(layout, n) // not better — roll back to the best version
+				fmt.Fprintf(out, "self-eval: chapter %d re-draft (%d) did not beat %d — kept original\n", n, sc, scores[n])
 			}
 			if scores[n] < qualityBar {
 				flagged = append(flagged, n)
@@ -1951,6 +1960,59 @@ func readScorecardOverall(layout world.Layout, n int) int {
 		}
 	}
 	return min
+}
+
+// readScorecardAxis returns the score of one axis (matched by its summary prefix,
+// e.g. "continuity" / "fog" / "prose") from a chapter's scorecard.json. Returns 100
+// when the file or axis is missing, so a missing signal never forces a re-draft.
+func readScorecardAxis(layout world.Layout, n int, prefix string) int {
+	raw, err := os.ReadFile(layout.InstallmentFile(n, "scorecard.json"))
+	if err != nil {
+		return 100
+	}
+	var card struct {
+		Results []struct {
+			Score   int    `json:"score"`
+			Summary string `json:"summary"`
+		} `json:"results"`
+	}
+	if json.Unmarshal(raw, &card) != nil {
+		return 100
+	}
+	for _, r := range card.Results {
+		if strings.HasPrefix(r.Summary, prefix) {
+			return r.Score
+		}
+	}
+	return 100
+}
+
+// chapterBestPaths are the artifacts a Phase-B re-draft overwrites — the prose Phase C
+// narrates, the rolled-forward canon, and the reporting files. snapshotChapter copies
+// them aside before a re-draft so restoreChapter can roll back a re-draft that didn't
+// improve (keep-best ON DISK, not just in the in-memory score).
+func chapterBestPaths(layout world.Layout, n int) []string {
+	return []string{
+		layout.InstallmentFile(n, "converged.md"),
+		layout.InstallmentFile(n, "chosen_outline.json"),
+		layout.InstallmentFile(n, "scorecard.json"),
+		layout.InstallmentFile(n, "metrics.json"),
+		layout.CanonFile(),
+	}
+}
+
+func snapshotChapter(layout world.Layout, n int) {
+	for _, p := range chapterBestPaths(layout, n) {
+		_ = copyFile(p, p+".best") // best-effort
+	}
+}
+
+func restoreChapter(layout world.Layout, n int) {
+	for _, p := range chapterBestPaths(layout, n) {
+		if _, err := os.Stat(p + ".best"); err == nil {
+			_ = copyFile(p+".best", p)
+		}
+	}
 }
 
 // logVRAM prints current GPU VRAM usage with a label. It exists to make the
