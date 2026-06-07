@@ -946,36 +946,88 @@ func runSeriesWrite(cmd *cobra.Command, slug string, bookFilter, chapterLimit in
 		fmt.Fprintf(out, "\n=== Book %d: %s (chapters %d–%d, generating through %d) ===\n",
 			r.book.N, fallbackStr(bookTitleOf(series, r.book), "untitled"), r.start, r.end, genEnd)
 
+		// Materialize each chapter's brief from its beat (reveal-paced) if absent —
+		// a hand-edited brief and resume both survive. Per-chapter reveal pacing: a
+		// chapter that names its own reveals (even []) overrides the book-wide license;
+		// only an unset (nil) chapter inherits the whole book's, so a high-reveal
+		// chapter isn't handed the entire book's sealed material to leak.
 		for n := r.start; n <= genEnd; n++ {
-			beat := flat[n-1]
-			// Materialize the chapter brief from the beat + the book's reveal-license
-			// + target length — but only if absent, so a hand-edited brief and resume
-			// both survive.
 			briefPath := layout.BriefFile(n)
 			if _, err := os.Stat(briefPath); os.IsNotExist(err) {
-				// Per-chapter reveal pacing: a chapter that names its own reveals
-				// (even an empty list) overrides the book-wide license; only an unset
-				// (nil) chapter inherits the whole book's reveals. This stops a
-				// high-reveal chapter from being handed the entire book's sealed
-				// material and leaking scale it shouldn't show yet.
 				rev := r.book.Reveals
-				if beat.Reveals != nil {
+				if beat := flat[n-1]; beat.Reveals != nil {
 					rev = *beat.Reveals
 				}
-				content := world.RenderSeriesChapterBrief(n, beat, rev, r.book.TargetWords)
+				content := world.RenderSeriesChapterBrief(n, flat[n-1], rev, r.book.TargetWords)
 				if err := os.WriteFile(briefPath, []byte(content), 0o644); err != nil {
 					return fmt.Errorf("write chapter %d brief: %w", n, err)
 				}
 			}
-			// Resume: a finished chapter has its episode.m4b. --force
-			// regenerates it instead of skipping.
+		}
+
+		// === Phase A: draft every chapter (prose + canon + scorecard, NO TTS) ===
+		// Sequential so canon + priors roll forward chapter to chapter.
+		const qualityBar = 80
+		scores := map[int]int{}
+		for n := r.start; n <= genEnd; n++ {
 			if _, err := os.Stat(layout.InstallmentFile(n, "episode.m4b")); err == nil && !regenForce {
-				fmt.Fprintf(out, "chapter %d (book %d): already done — skipping\n", n, r.book.N)
+				fmt.Fprintf(out, "chapter %d: already narrated — skipping\n", n)
+				scores[n] = qualityBar // done; don't re-fix
 				continue
 			}
-			fmt.Fprintf(out, "\n--- chapter %d (book %d, %d/%d) ---\n", n, r.book.N, n-r.start+1, len(r.book.Chapters))
-			if err := generateInstallment(cmd, layout, n, narrator); err != nil {
-				return fmt.Errorf("chapter %d: %w", n, err)
+			if _, err := os.Stat(layout.InstallmentFile(n, "converged.md")); err == nil && !regenForce {
+				scores[n] = readScorecardOverall(layout, n)
+				fmt.Fprintf(out, "chapter %d: already drafted (%d/100) — reusing\n", n, scores[n])
+				continue
+			}
+			sc, err := draftInstallment(cmd, layout, n, narrator)
+			if err != nil {
+				return fmt.Errorf("draft chapter %d: %w", n, err)
+			}
+			scores[n] = sc
+		}
+
+		// === Phase B: self-evaluating fix loop ===
+		// Re-draft any chapter below the bar — regeneration is the fix lever (fresh
+		// prose usually clears a stochastic continuity/fog flag). Continuity is the
+		// binding axis here: Overall = min(prose, continuity, fog), so overall >= bar
+		// already REQUIRES continuity >= bar. Bounded; stubborn chapters are flagged,
+		// not looped forever, and are narrated anyway so you have something to review.
+		// One round: a fresh sample sometimes clears a stochastic continuity flag, but
+		// re-rolling rarely fixes a fog leak (the writer re-leaks the same sealed
+		// material) — a second round mostly burns GPU. Stubborn chapters are flagged
+		// for a targeted fix (reveal-pacing), not re-rolled all night.
+		const maxFixRounds = 1
+		var flagged []int
+		for n := r.start; n <= genEnd; n++ {
+			for round := 1; scores[n] < qualityBar && round <= maxFixRounds; round++ {
+				fmt.Fprintf(out, "self-eval: chapter %d at %d/100 (<%d) — re-drafting (round %d/%d)\n",
+					n, scores[n], qualityBar, round, maxFixRounds)
+				sc, err := draftInstallment(cmd, layout, n, narrator)
+				if err != nil {
+					return fmt.Errorf("re-draft chapter %d: %w", n, err)
+				}
+				if sc > scores[n] {
+					scores[n] = sc
+				}
+			}
+			if scores[n] < qualityBar {
+				flagged = append(flagged, n)
+			}
+		}
+		if len(flagged) > 0 {
+			fmt.Fprintf(out, "\n⚠ book %d: chapters below %d after fixes: %v (narrated anyway — review these)\n",
+				r.book.N, qualityBar, flagged)
+		}
+
+		// === Phase C: narrate every drafted chapter (TTS + cover + mix) ===
+		// Runs on the finalized prose only — TTS is never paid on prose that changed.
+		for n := r.start; n <= genEnd; n++ {
+			if _, err := os.Stat(layout.InstallmentFile(n, "episode.m4b")); err == nil && !regenForce {
+				continue
+			}
+			if err := narrateInstallment(cmd, layout, n, narrator); err != nil {
+				return fmt.Errorf("narrate chapter %d: %w", n, err)
 			}
 		}
 
@@ -1660,6 +1712,245 @@ func generateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrato
 
 	fmt.Fprintf(cmd.OutOrStdout(), "\n✓ installment %d done: %s\n", n, layout.InstallmentFile(n, "episode.m4b"))
 	return nil
+}
+
+// --- three-phase series generation: draft all → self-evaluate/fix → narrate all ---
+//
+// The series driver splits generation so the expensive, irreversible narration (TTS +
+// cover + mix) is never paid on prose that still has issues. Phase A drafts every
+// chapter (prose + canon + scorecard, no TTS), rolling canon forward in order. Phase B
+// is the self-evaluating fix loop: it re-reads each chapter's scorecard and, for any
+// below the bar, re-drafts (regenerates) — prioritising continuity, the most damaging
+// axis — until the chapter clears the bar or a cap, flagging stubborn ones. Phase C
+// narrates only the finalized prose. (generateInstallment above keeps the old inline
+// path for the single-installment `story`/`novel` commands.)
+
+// installmentSetup does the per-installment preparation shared by drafting and
+// narration. When truncate is true it first drops chapter n's own (stale) canon
+// section so a fresh draft re-extracts it; narration passes false so it never disturbs
+// the finalized canon. Returns the assembled StoryConfig + run dir.
+func installmentSetup(cmd *cobra.Command, layout world.Layout, n int, narrator string, truncate bool) (pipeline.StoryConfig, string, error) {
+	var zero pipeline.StoryConfig
+	canonPath, err := world.EnsureCanonFile(layout)
+	if err != nil {
+		return zero, "", fmt.Errorf("ensure canon: %w", err)
+	}
+	if truncate {
+		if err := world.TruncateCanonFrom(layout, n); err != nil {
+			return zero, "", fmt.Errorf("truncate canon: %w", err)
+		}
+	}
+	installmentDir := layout.InstallmentDir(n)
+	if err := os.MkdirAll(installmentDir, 0o755); err != nil {
+		return zero, "", err
+	}
+	priorsPath, err := world.EnsurePriorsFile(layout, installmentDir, n)
+	if err != nil {
+		return zero, "", fmt.Errorf("ensure priors: %w", err)
+	}
+	brief, briefBody, err := world.ParseBrief(layout.BriefFile(n))
+	if err != nil {
+		return zero, "", fmt.Errorf("parse brief frontmatter: %w", err)
+	}
+	timeline, err := world.LoadTimeline(layout)
+	if err != nil {
+		return zero, "", fmt.Errorf("load timeline: %w", err)
+	}
+	filterOpts := world.FilterOptsFromBrief(brief, timeline.Calendar)
+	historyPath, err := world.WriteHistoricalContext(installmentDir, timeline.Events, filterOpts)
+	if err != nil {
+		return zero, "", fmt.Errorf("write historical context: %w", err)
+	}
+	canonRelevantPath, err := world.WriteRelevantCanon(installmentDir, canonPath, briefBody, brief.OnStageActors, world.DefaultCanonBudget, n)
+	if err != nil {
+		return zero, "", fmt.Errorf("filter canon: %w", err)
+	}
+	notebookPath, err := world.WriteAssembledNotebook(layout, installmentDir)
+	if err != nil {
+		return zero, "", fmt.Errorf("assemble notebook: %w", err)
+	}
+	revealsPath, err := world.WriteLicensedReveals(installmentDir, brief.Reveals)
+	if err != nil {
+		return zero, "", fmt.Errorf("write licensed reveals: %w", err)
+	}
+	if err := runPipeline(cmd, installmentDir, func() (*vamp.Pipeline, error) {
+		return pipeline.BuildChapterFacts(pipeline.ChapterFactsConfig{
+			BriefFile:             layout.BriefFile(n),
+			WorldFile:             layout.WorldFile(),
+			CanonFile:             canonPath,
+			NotebookFile:          notebookPath,
+			PriorsFile:            priorsPath,
+			HistoricalContextFile: historyPath,
+		})
+	}); err != nil {
+		return zero, "", fmt.Errorf("chapter facts: %w", err)
+	}
+	cfg := pipeline.StoryConfig{
+		InstallmentNumber:     n,
+		WorldFile:             layout.WorldFile(),
+		CharactersFile:        layout.CharactersFile(),
+		CanonFile:             canonPath,
+		CanonRelevantFile:     canonRelevantPath,
+		PriorsFile:            priorsPath,
+		BriefFile:             layout.BriefFile(n),
+		HistoricalContextFile: historyPath,
+		NotebookFile:          notebookPath,
+		LicensedRevealsFile:   revealsPath,
+		ChapterFactsFile:      layout.InstallmentFile(n, "chapter_facts.md"),
+		NarratorVoice:         narrator,
+		TargetWords:           brief.TargetWords,
+		SkipFinalize:          true,
+		CoverPromptFile:       layout.InstallmentFile(n, "cover_prompt.txt"),
+	}
+	return cfg, installmentDir, nil
+}
+
+// draftInstallment runs phase A for chapter n: best-of prose convergence, then a
+// DraftOnly pipeline pass that extracts canon + summary (rolling them forward) and
+// writes the scorecard — WITHOUT narration/TTS. Returns the overall scorecard score
+// (0 when it couldn't be computed).
+func draftInstallment(cmd *cobra.Command, layout world.Layout, n int, narrator string) (int, error) {
+	cfg, installmentDir, err := installmentSetup(cmd, layout, n, narrator, true)
+	if err != nil {
+		return 0, err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "\n--- draft chapter %d ---\n", n)
+	logVRAM(cmd, fmt.Sprintf("ch%d draft start", n))
+
+	attempts := storyBestOf
+	if attempts < 1 {
+		attempts = 1
+	}
+	bestConverged, bestOutline := "", ""
+	bestBad := -1
+	for i := 1; i <= attempts; i++ {
+		attemptCfg := cfg
+		if attempts > 1 {
+			attemptCfg.Seed = i
+		}
+		winPath, bad, outlineJSON, err := convergeProse(cmd, layout, n, attemptCfg, installmentDir)
+		if err != nil {
+			return 0, err
+		}
+		if bestBad < 0 || bad < bestBad {
+			// Preserve this attempt before the next overwrites the shared in-dir files.
+			attemptPath := layout.InstallmentFile(n, fmt.Sprintf("attempt_%d.md", i))
+			if err := copyFile(winPath, attemptPath); err != nil {
+				return 0, fmt.Errorf("ch%d preserve attempt %d: %w", n, i, err)
+			}
+			bestBad, bestConverged, bestOutline = bad, attemptPath, outlineJSON
+		}
+		if bestBad == 0 {
+			break
+		}
+	}
+
+	convergedPath := layout.InstallmentFile(n, "converged.md")
+	if err := copyFile(bestConverged, convergedPath); err != nil {
+		return 0, fmt.Errorf("ch%d stage converged prose: %w", n, err)
+	}
+	// Persist the chosen outline so phase-C narration reuses it (no regeneration).
+	_ = os.WriteFile(layout.InstallmentFile(n, "chosen_outline.json"), []byte(bestOutline), 0o644)
+
+	// DraftOnly: re-emit converged prose, run checks + canon_delta + summary + reconcile
+	// (canon rolls forward) but NO narration.
+	cfg.DraftFile = convergedPath
+	cfg.OutlineJSON = bestOutline
+	cfg.PreEdited = true
+	cfg.SkipNarration = false
+	cfg.DraftOnly = true
+	if err := runPipeline(cmd, installmentDir, func() (*vamp.Pipeline, error) {
+		return pipeline.BuildStory(cfg)
+	}); err != nil {
+		return 0, fmt.Errorf("ch%d (draft canon/summary): %w", n, err)
+	}
+	auditFindings(cmd, layout, n, installmentDir,
+		layout.InstallmentFile(n, "story.md"),
+		layout.InstallmentFile(n, "fog_report.md"),
+		layout.InstallmentFile(n, "continuity_report.md"),
+		cfg.WorldFile, cfg.CanonFile)
+	if err := world.AppendCanonDelta(layout, n); err != nil {
+		return 0, fmt.Errorf("ch%d append canon: %w", n, err)
+	}
+
+	var prose *world.ProseMetrics
+	if m, err := world.WriteProseMetrics(layout.InstallmentFile(n, "story.md"), layout.InstallmentFile(n, "metrics.json")); err == nil {
+		prose = &m
+	}
+	overall := 0
+	if card, err := world.WriteScorecard(layout, n, prose); err == nil {
+		overall = world.Overall(card)
+		fmt.Fprintf(cmd.OutOrStdout(), "ch%d draft scorecard: overall %d/100\n", n, overall)
+	} else {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: ch%d scorecard: %v\n", n, err)
+	}
+	return overall, nil
+}
+
+// narrateInstallment runs phase C for chapter n: narration (showrunner + TTS) on the
+// already-finalized converged prose, then cover + mix → episode.m4b. It reuses the
+// drafted canon (does NOT re-append) and the outline saved at draft time.
+func narrateInstallment(cmd *cobra.Command, layout world.Layout, n int, narrator string) error {
+	convergedPath := layout.InstallmentFile(n, "converged.md")
+	if _, err := os.Stat(convergedPath); err != nil {
+		return fmt.Errorf("ch%d not drafted (no converged.md)", n)
+	}
+	cfg, installmentDir, err := installmentSetup(cmd, layout, n, narrator, false)
+	if err != nil {
+		return err
+	}
+	cfg.DraftFile = convergedPath
+	cfg.PreEdited = true
+	cfg.SkipNarration = false
+	if raw, err := os.ReadFile(layout.InstallmentFile(n, "chosen_outline.json")); err == nil && len(raw) > 0 {
+		cfg.OutlineJSON = string(raw)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "\n--- narrate chapter %d ---\n", n)
+	logVRAM(cmd, fmt.Sprintf("ch%d before narration (LLM resident)", n))
+	if err := runPipeline(cmd, installmentDir, func() (*vamp.Pipeline, error) {
+		return pipeline.BuildStory(cfg)
+	}); err != nil {
+		return fmt.Errorf("ch%d (narration): %w", n, err)
+	}
+	logVRAM(cmd, fmt.Sprintf("ch%d after narration (TTS done)", n))
+	freeActiveLLM(cmd, "the cover phase")
+	root2, err := vamp.BuildRoot(func() (*vamp.Pipeline, error) {
+		return pipeline.BuildEpisodeFinalize(cfg)
+	})
+	if err != nil {
+		return err
+	}
+	root2.SetArgs([]string{"run", "--run-dir", installmentDir})
+	if err := root2.ExecuteContext(cmd.Context()); err != nil {
+		return fmt.Errorf("ch%d finalize (cover + mix): %w", n, err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "✓ chapter %d narrated: %s\n", n, layout.InstallmentFile(n, "episode.m4b"))
+	return nil
+}
+
+// readScorecardOverall returns the Overall (min-axis) score from a chapter's
+// already-written scorecard.json, or 0 when it can't be read — so a drafted-but-
+// unscored chapter reads as below the bar and gets re-drafted in phase B.
+func readScorecardOverall(layout world.Layout, n int) int {
+	raw, err := os.ReadFile(layout.InstallmentFile(n, "scorecard.json"))
+	if err != nil {
+		return 0
+	}
+	var card struct {
+		Results []struct {
+			Score int `json:"score"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(raw, &card); err != nil || len(card.Results) == 0 {
+		return 0
+	}
+	min := 100
+	for _, r := range card.Results {
+		if r.Score < min {
+			min = r.Score
+		}
+	}
+	return min
 }
 
 // logVRAM prints current GPU VRAM usage with a label. It exists to make the

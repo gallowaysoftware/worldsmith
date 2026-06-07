@@ -92,6 +92,12 @@ type StoryConfig struct {
 	// whether to run a targeted fix, and only narrate once the prose has
 	// converged (so the slow TTS pass never runs on prose that would fail).
 	SkipNarration bool
+	// DraftOnly, when true, runs the prose checks AND canon_delta + summarize +
+	// reconcile_canon, then stops before narration (cover/showrunner/TTS/mix). Unlike
+	// SkipNarration (which also skips canon), DraftOnly still rolls canon + priors
+	// forward — it's how the three-phase series driver drafts every chapter before
+	// narrating any, so the big LLM unloads once for the whole narration phase.
+	DraftOnly bool
 	// PreEdited, when true, makes edit_story a pass-through of the supplied
 	// DraftFile instead of an LLM rewrite — the draft is already edited (it
 	// came out of the verify-loop's span-fix/applyFixes pass). Downstream
@@ -533,6 +539,14 @@ func BuildStory(cfg StoryConfig) (*vamp.Pipeline, error) {
 
 	// (continuity_check + fog_check now run earlier, right after edit_story, so the
 	// verify-loop and the SkipNarration exit can use their reports.)
+
+	// DraftOnly stops here: the prose checks AND canon_delta + summary + reconcile have
+	// run (so canon and priors roll forward to the next chapter), but narration — cover,
+	// showrunner, TTS, mix — is deferred. The three-phase series driver drafts every
+	// chapter this way first, then narrates the whole book in one LLM-unloaded phase.
+	if cfg.DraftOnly {
+		return p.Build()
+	}
 
 	// ---- cover ----
 
