@@ -1770,7 +1770,13 @@ func convergeProse(cmd *cobra.Command, layout world.Layout, n int, cfg pipeline.
 		if err := runPipeline(cmd, installmentDir, func() (*vamp.Pipeline, error) {
 			return pipeline.BuildSpanFix(scfg)
 		}); err != nil {
-			return "", 0, "", fmt.Errorf("installment %d span-fix pass %d: %w", n, iter, err)
+			// Non-fatal: span_fix occasionally emits malformed JSON (e.g. a chapter with
+			// many leak spans overruns the token cap). A failed fix pass must NOT abort the
+			// whole chapter/run — stop the verify-loop and ship the best version seen so
+			// far (forceCutFog still removed leaks on prior passes). Apply still runs below
+			// if a usable spanfix.json from this attempt exists; otherwise the loop ends.
+			fmt.Fprintf(cmd.ErrOrStderr(), "installment %d span-fix pass %d failed (%v) — keeping best so far\n", n, iter, err)
+			break
 		}
 		polishedName := fmt.Sprintf("polished_%d.md", iter)
 		// forceCutFog: cut every fog leak each pass — monotonic and reliable (the
