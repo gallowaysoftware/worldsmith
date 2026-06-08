@@ -675,8 +675,162 @@ book-level planning, per-book reveal-pacing, and chaptered-m4b assembly.`,
 	}
 	cmd.AddCommand(seriesPlanCommand())
 	cmd.AddCommand(seriesRevealsCommand())
+	cmd.AddCommand(seriesToneBeatsCommand())
 	cmd.AddCommand(seriesWriteCommand())
 	return cmd
+}
+
+func seriesToneBeatsCommand() *cobra.Command {
+	var slug, chaptersCSV string
+	var bookFilter int
+	cmd := &cobra.Command{
+		Use:   "tone-beats <slug>",
+		Short: "Rewrite leaking chapters' beats so their sealed material stays subtext.",
+		Long: `tone-beats fixes the chapters that leak no matter how the reveal is paced or
+how many times the prose is re-drafted — the ones whose BEAT is built around the secret
+(so the writer faithfully renders a leak). For each, the LLM rewrites the beats to keep
+the same plot events but move the sealed material off the page (subtext), revealing only
+what that chapter's license permits. It writes the toned beats into arc.json (backed up).
+
+By default it targets chapters whose latest scorecard shows a fog leak (fog < 80); pass
+--chapters "3,4,7" to target specific ones. Review arc.json, then re-draft those chapters
+(worldsmith series write <slug> --draft-only --force, or delete their converged.md).`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				slug = args[0]
+			}
+			if slug == "" {
+				return fmt.Errorf("world slug required (positional arg or --slug)")
+			}
+			return runSeriesToneBeats(cmd, slug, bookFilter, chaptersCSV)
+		},
+	}
+	cmd.Flags().StringVar(&slug, "slug", "", "World slug (alternative to positional arg).")
+	cmd.Flags().IntVar(&bookFilter, "book", 0, "Only tone chapters in this book number (0 = all books).")
+	cmd.Flags().StringVar(&chaptersCSV, "chapters", "", "Comma-separated global chapter numbers to tone (default: auto — chapters with a fog leak).")
+	return cmd
+}
+
+func runSeriesToneBeats(cmd *cobra.Command, slug string, bookFilter int, chaptersCSV string) error {
+	out := cmd.OutOrStdout()
+	layout, err := world.Open(slug)
+	if err != nil {
+		return err
+	}
+	unlock, err := lockWorld(layout)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	arc, ok, err := world.LoadArc(layout)
+	if err != nil {
+		return err
+	}
+	if !ok || len(arc.Books) == 0 {
+		return fmt.Errorf("no arc.json with books at %s", layout.ArcFile())
+	}
+	genDir := filepath.Join(layout.Root, ".gen-tone")
+	if err := os.MkdirAll(genDir, 0o755); err != nil {
+		return err
+	}
+	notebookPath, err := world.WriteAssembledNotebook(layout, genDir)
+	if err != nil {
+		return fmt.Errorf("assemble notebook: %w", err)
+	}
+
+	// Explicit target set (global chapter numbers), or empty = auto (fog leak).
+	targets := map[int]bool{}
+	for _, p := range strings.Split(chaptersCSV, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			if v, e := strconv.Atoi(p); e == nil {
+				targets[v] = true
+			}
+		}
+	}
+	auto := len(targets) == 0
+
+	toned := 0
+	gn := 0 // running global chapter number
+	for bi := range arc.Books {
+		b := &arc.Books[bi]
+		for ci := range b.Chapters {
+			gn++
+			if bookFilter > 0 && b.N != bookFilter {
+				continue
+			}
+			if auto {
+				if readScorecardAxis(layout, gn, "fog") >= 80 {
+					continue // no fog leak — leave it
+				}
+			} else if !targets[gn] {
+				continue
+			}
+			ch := &b.Chapters[ci]
+			revealsTxt := "(this chapter reveals nothing — keep all sealed material subtext)"
+			if ch.Reveals != nil && len(*ch.Reveals) > 0 {
+				revealsTxt = renderBullets(*ch.Reveals)
+			}
+			fmt.Fprintf(out, "toning beats: ch%d (%s)...\n", gn, fallbackStr(ch.Title, "untitled"))
+			cfg := pipeline.BeatTonerConfig{
+				WorldFile:           layout.WorldFile(),
+				NotebookFile:        notebookPath,
+				ChapterN:            gn,
+				Title:               ch.Title,
+				BeatsRendered:       renderBullets(ch.Beats),
+				ConstraintsRendered: renderBullets(ch.Constraints),
+				Reveals:             revealsTxt,
+			}
+			if err := runPipeline(cmd, genDir, func() (*vamp.Pipeline, error) {
+				return pipeline.BuildBeatToner(cfg)
+			}); err != nil {
+				return fmt.Errorf("ch%d tone beats: %w", gn, err)
+			}
+			raw, err := os.ReadFile(filepath.Join(genDir, "toned_beats.json"))
+			if err != nil {
+				return fmt.Errorf("ch%d read toned beats: %w", gn, err)
+			}
+			var t struct {
+				Hook        string   `json:"hook"`
+				Beats       []string `json:"beats"`
+				Constraints []string `json:"constraints"`
+			}
+			if err := json.Unmarshal(world.StripJSONFence(raw), &t); err != nil {
+				return fmt.Errorf("ch%d parse toned beats: %w", gn, err)
+			}
+			if len(t.Beats) == 0 {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  ch%d: toner returned no beats — skipped\n", gn)
+				continue
+			}
+			if strings.TrimSpace(t.Hook) != "" {
+				ch.Hook = t.Hook
+			}
+			ch.Beats = t.Beats
+			if len(t.Constraints) > 0 {
+				ch.Constraints = t.Constraints
+			}
+			toned++
+		}
+	}
+	if toned == 0 {
+		fmt.Fprintf(out, "no chapters needed toning (no fog leaks, or none matched)\n")
+		return nil
+	}
+	backup := layout.ArcFile() + ".bak." + time.Now().Format("2006-01-02T15-04-05")
+	if err := copyFile(layout.ArcFile(), backup); err != nil {
+		return fmt.Errorf("back up arc.json: %w", err)
+	}
+	enc, err := json.MarshalIndent(arc, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(layout.ArcFile(), append(enc, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write arc.json: %w", err)
+	}
+	fmt.Fprintf(out, "\n✓ toned beats for %d chapter(s) (arc.json backed up → %s)\n  re-draft them: worldsmith series write %s --draft-only --force\n",
+		toned, backup, slug)
+	return nil
 }
 
 func seriesRevealsCommand() *cobra.Command {
