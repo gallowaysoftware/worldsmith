@@ -329,3 +329,7 @@ Most commands take the world slug as a positional arg or via `--slug`.
 | `activate` | Bring up the required vibe profiles/services via vamp (idempotent). |
 | `doctor` | Read-only: report which required vibe services are up (non-zero exit if missing). |
 | `bench --slug <slug> --installment N --candidates p1,p2[,...]` | A/B candidate `long_form` profiles on a fixed installment; outputs blinded for human scoring. |
+
+## License
+
+Copyright (c) 2026 Galloway Software Solutions Inc. All rights reserved. No licence has been granted for this code yet.
